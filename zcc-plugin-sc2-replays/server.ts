@@ -4,7 +4,7 @@ import { readFile, realpath } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
-import { confined, emptyReview, readBounded, scanMatches, validateReplay,
+import { confined, emptyReview, readBounded, scanMatches, validateReplay, validateAnalysis,
   type IndexedMatch, type StoredReview } from './library.ts';
 
 const pluginDirectory = dirname(fileURLToPath(import.meta.url));
@@ -75,6 +75,12 @@ export default async function plugin(zcc: ZccPluginApi) {
     const match = await matchFor(input);
     return readReview(match.id);
   });
+  async function analysis(input: unknown) {
+    const match = await matchFor(input);
+    const bytes = await readBounded(join(match.project, 'runs'), join(match.directory, 'analysis.json'), 1024 * 1024);
+    return validateAnalysis(JSON.parse(bytes.toString('utf8')));
+  }
+  zcc.rpc.method('analysis', analysis);
   zcc.rpc.method('annotate', async input => {
     const args = argsObject(input), match = await matchFor(args);
     return db.transaction(() => {
@@ -180,7 +186,8 @@ export default async function plugin(zcc: ZccPluginApi) {
   });
   zcc.cli.register({ name: 'sc2-replays', summary: 'List recorded SC2 matches and prepare tactical playback',
     commands: [{ name: 'list', summary: 'List replays in the configured project', usage: 'zcc sc2-replays list' },
-      { name: 'prepare', summary: 'Export a replay through SC2, without models or learning writes', usage: 'zcc sc2-replays prepare <id>' }],
+      { name: 'prepare', summary: 'Export a replay through SC2, without models or learning writes', usage: 'zcc sc2-replays prepare <id>' },
+      { name: 'analysis', summary: 'Read a saved post-game report without model calls', usage: 'zcc sc2-replays analysis <id>' }],
     async run(argv) {
       try {
         if (argv[0] === 'list') {
@@ -188,7 +195,8 @@ export default async function plugin(zcc: ZccPluginApi) {
           return { exitCode: 0, stdout: JSON.stringify(matches, null, 2) };
         }
         if (argv[0] === 'prepare' && argv[1]) return { exitCode: 0, stdout: JSON.stringify(await prepare({ id: argv[1] })) };
-        return { exitCode: 2, stderr: 'Usage: zcc sc2-replays list | prepare <id>' };
+        if (argv[0] === 'analysis' && argv[1]) return { exitCode: 0, stdout: JSON.stringify(await analysis({ id: argv[1] }), null, 2) };
+        return { exitCode: 2, stderr: 'Usage: zcc sc2-replays list | prepare <id> | analysis <id>' };
       } catch (e) { return { exitCode: 1, stderr: e instanceof Error ? e.message : String(e) }; }
     }
   });

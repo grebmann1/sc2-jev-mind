@@ -19,6 +19,14 @@ def test_launch_failures_are_not_counted_as_played_matches():
     assert summarize([])["win_rate"] is None
 
 
+def test_cross_map_schedule_uses_held_out_seeds(capsys):
+    assert main(["--dry-run", "--maps", "MapA", "MapB", "--seed-start", "101", "--games", "3"]) == 0
+    matches = json.loads(capsys.readouterr().out)["matches"]
+    assert len(matches) == 18
+    assert {m["seed"] for m in matches} == {101, 102, 103}
+    assert {m["map"] for m in matches} == {"MapA", "MapB"}
+
+
 def test_dry_run_does_not_require_game_or_keys(capsys, monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     assert main(["--dry-run", "--games", "2"]) == 0

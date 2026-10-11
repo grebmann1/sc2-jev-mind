@@ -6,7 +6,35 @@ export type Match = {
   id: string; folder: string; map: string; result: string; enemy: string;
   difficulty: string; opening: string; createdAt: number; duration: number;
   ready: boolean; memorySaved: boolean; offline: boolean; replayFile: string;
+  analysisStatus?: string;
 };
+export type PostGameReport = {
+  schema_version: number; status: string;
+  review: { summary: string; strengths: string[]; missing_evidence: string[]; findings: {
+    category: string; priority: string; hypothesis: string; evidence_ids: string[];
+    proposed_change: string; validation: string; uncertainty: string;
+  }[] };
+  evidence: { facts: Record<string, unknown>; warnings: string[]; general_patterns: {
+    matches: number; conditions: number; maps: string[]; races: string[];
+  } };
+};
+
+export function validateAnalysis(data: any): PostGameReport {
+  const text = (value: unknown) => typeof value === 'string' && value.length <= 3000;
+  const texts = (value: unknown) => Array.isArray(value) && value.length <= 20 && value.every(text);
+  const review = data?.review, evidence = data?.evidence, sample = evidence?.general_patterns;
+  if (data?.schema_version !== 1 || !['pending', 'offline', 'complete', 'failed'].includes(data.status) ||
+      !review || !text(review.summary) || !texts(review.strengths) || !texts(review.missing_evidence) ||
+      !Array.isArray(review.findings) || review.findings.length > 6 || !review.findings.every((f: any) =>
+        f && ['category', 'priority', 'hypothesis', 'proposed_change', 'validation', 'uncertainty'].every(key => text(f[key])) && texts(f.evidence_ids)) ||
+      !evidence || !texts(evidence.warnings) || !evidence.facts || typeof evidence.facts !== 'object' ||
+      Array.isArray(evidence.facts) || !sample || ![sample.matches, sample.conditions].every(n =>
+        typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 50) ||
+      !Array.isArray(sample.maps) || !sample.maps.every(text) || !Array.isArray(sample.races) || !sample.races.every(text)) {
+    throw new Error('Unsupported or incomplete post-game analysis');
+  }
+  return data;
+}
 export type StoredReview = { favorite: boolean; note: string; bookmarks: Bookmark[] };
 export type Bookmark = { id: string; t: number; label: string };
 export type IndexedMatch = Match & { directory: string; project: string };
@@ -100,6 +128,7 @@ export async function scanMatches(project: string): Promise<IndexedMatch[]> {
     const replay = entries.find(e => e.isFile() && e.name.endsWith('.SC2Replay'));
     if (replay) {
       const result = await optionalJson(root, join(directory, 'result.json'));
+      const analysis = await optionalJson(root, join(directory, 'analysis.json'), 1024 * 1024);
       let metadata = await optionalJson(root, join(directory, 'viewer', 'metadata.json'));
       // The first viewer predates the compact index. Read its existing export once per scan.
       if (!metadata.duration) metadata = await optionalJson(root, join(directory, 'viewer', 'data.json'), 128 * 1024 * 1024);
@@ -115,6 +144,7 @@ export async function scanMatches(project: string): Promise<IndexedMatch[]> {
         opening: String(result.opening ?? metadata.opening ?? 'Unknown'),
         duration: Number.isFinite(Number(metadata.duration)) && Number(metadata.duration) > 0 ? Number(metadata.duration) : 0, memorySaved: Boolean(result.memory_saved ?? metadata.memorySaved),
         offline: Boolean(result.offline ?? metadata.offline), ready,
+        analysisStatus: ['pending', 'offline', 'complete', 'failed'].includes(analysis.status) ? analysis.status : undefined,
         createdAt: (await stat(join(directory, replay.name))).mtimeMs });
       return;
     }

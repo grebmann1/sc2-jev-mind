@@ -59,6 +59,10 @@ class Episode:
         self.observations = 0
         self.peak_workers = self.peak_army_supply = self.peak_bases = 0
         self.supply_blocked_s = self.under_threat_s = 0.0
+        self.observed_s = self.mineral_bank_s = 0.0
+        self.peak_minerals = self.peak_gas = 0
+        self.first_expansion_s: float | None = None
+        self.first_stim_s: float | None = None
         self.first_threat_s: float | None = None
         self._previous: Snapshot | None = None
         self.initial_plan: dict | None = None
@@ -69,6 +73,12 @@ class Episode:
         self.peak_workers = max(self.peak_workers, snap.workers)
         self.peak_army_supply = max(self.peak_army_supply, snap.army_supply)
         self.peak_bases = max(self.peak_bases, snap.townhalls)
+        self.peak_minerals = max(self.peak_minerals, snap.minerals)
+        self.peak_gas = max(self.peak_gas, snap.gas)
+        if snap.townhalls >= 2 and self.first_expansion_s is None:
+            self.first_expansion_s = round(snap.time_s, 1)
+        if snap.stim == "done" and self.first_stim_s is None:
+            self.first_stim_s = round(snap.time_s, 1)
         if self.initial_plan is None:
             self.initial_plan = plan
         if snap.base_threatened and self.first_threat_s is None:
@@ -77,6 +87,9 @@ class Episode:
         if prev is not None:
             dt = snap.time_s - prev.time_s
             if 0 < dt <= 5:
+                self.observed_s += dt
+                if prev.minerals >= 800:
+                    self.mineral_bank_s += dt
                 if prev.supply_used >= prev.supply_cap and prev.supply_cap < 200:
                     self.supply_blocked_s += dt
                 if prev.base_threatened:
@@ -95,6 +108,14 @@ class Episode:
                     "supply": [snap.supply_used, snap.supply_cap],
                     "enemy_army_seen": dict(snap.enemy_army_seen),
                     "threat": snap.enemies_near_base,
+                    "minerals": snap.minerals,
+                    "gas": snap.gas,
+                    "army": dict(snap.army),
+                    "barracks": snap.barracks,
+                    "techlabs": snap.techlabs,
+                    "reactors": snap.reactors,
+                    "stim": snap.stim,
+                    "weapons1": snap.weapons1,
                 }
             )
             self.timeline = self.timeline[-200:]
@@ -108,6 +129,13 @@ class Episode:
             "first_threat_s": self.first_threat_s,
             "observed_supply_blocked_s": round(self.supply_blocked_s, 1),
             "observed_under_threat_s": round(self.under_threat_s, 1),
+            "observed_time_s": round(self.observed_s, 1),
+            "observations": self.observations,
+            "observed_mineral_bank_s": round(self.mineral_bank_s, 1),
+            "peak_minerals": self.peak_minerals,
+            "peak_gas": self.peak_gas,
+            "first_expansion_s": self.first_expansion_s,
+            "first_stim_s": self.first_stim_s,
             "model_errors": dict(self.errors),
             "issued_investments": dict(self.investments),
         }
@@ -185,6 +213,28 @@ class MemoryStore:
     def _connect_readonly(self):
         return sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
 
+    def get(self, match_id: str) -> dict | None:
+        if not self.path.exists():
+            return None
+        with closing(self._connect_readonly()) as db:
+            row = db.execute(
+                "SELECT payload FROM episodes WHERE match_id=?", (match_id,)
+            ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def review_history(self, context: MatchContext, limit: int = 50) -> list[dict]:
+        """Compare maps/races while holding execution and decision policy constant."""
+        if not self.path.exists():
+            return []
+        fields = ("controller", "engine", "difficulty", "policy", "realtime", "time_limit_s")
+        where = " AND ".join(f"json_extract(context_key, '$.{key}') = ?" for key in fields)
+        with closing(self._connect_readonly()) as db:
+            rows = db.execute(
+                f"SELECT payload FROM episodes WHERE {where} ORDER BY created_at DESC, match_id DESC LIMIT ?",
+                [*(getattr(context, key) for key in fields), max(0, min(limit, 50))],
+            ).fetchall()
+        return [json.loads(row[0]) for row in rows]
+
     def retrieve(self, context: MatchContext, limit: int = 3) -> dict[str, Any]:
         # Pool races only while a random opponent hasn't been identified.
         race_clause = "" if context.enemy_race in {"Random", "Unknown"} else " AND race = ?"
@@ -222,6 +272,7 @@ class MemoryStore:
             "comparable_games": sum(s["games"] for s in stats.values()),
             "opening_stats": stats,
             "episodes": episodes,
+            "general_patterns": general_patterns(self.review_history(context)),
             "interpretation": "Observed associations, not causal proof; current game facts take precedence.",
         }
 
@@ -242,6 +293,85 @@ class MemoryStore:
             "contexts": contexts,
             "openings": dict(rows),
         }
+
+
+def general_patterns(records: list[dict]) -> dict:
+    """Recurring measured signals, never model-authored advice or causal claims."""
+    eligible = {
+        r["match_id"]: r for r in records if r.get("metrics", {}).get("duration_s", 0) >= 180
+    }
+    games = list(eligible.values())
+
+    def diversity(rows: list[dict]) -> dict:
+        contexts = [r["context"] for r in rows]
+        conditions = {(c["map_name"], c["enemy_race"], c.get("seed")) for c in contexts}
+        return {
+            "matches": len(rows),
+            "conditions": len(conditions),
+            "maps": sorted({c["map_name"] for c in contexts}),
+            "races": sorted({c["enemy_race"] for c in contexts}),
+            "seeds": sorted({c["seed"] for c in contexts if c.get("seed") is not None}),
+        }
+
+    signals = {}
+    for name, metric, threshold in (
+        ("supply_blocks", "observed_supply_blocked_s", 10),
+        ("mineral_bank", "observed_mineral_bank_s", 30),
+        ("provider_errors", "model_errors", 1),
+    ):
+        measured = [
+            r
+            for r in games
+            if metric in r["metrics"]
+            and (metric == "model_errors" or r["metrics"].get("observed_time_s", 1) > 0)
+        ]
+        affected = [
+            r
+            for r in measured
+            if (
+                sum(r["metrics"][metric].values())
+                if metric == "model_errors"
+                else r["metrics"][metric]
+            )
+            >= threshold
+        ]
+        scope = diversity(affected)
+        broad = (
+            scope["conditions"] >= 3
+            and len(scope["maps"]) >= 2
+            and len(set(scope["races"]) - {"Random", "Unknown"}) >= 2
+            and len(scope["seeds"]) >= 3
+        )
+        signals[name] = {
+            **scope,
+            "measured_matches": len(measured),
+            "metric": metric,
+            "threshold": threshold,
+            "status": "candidate_for_controlled_test" if broad else "provisional",
+        }
+    return {
+        **diversity(games),
+        "outcomes_by_map_race": [
+            {
+                "map": name,
+                "race": race,
+                "results": dict(
+                    Counter(
+                        r["result"]
+                        for r in games
+                        if r["context"]["map_name"] == name and r["context"]["enemy_race"] == race
+                    )
+                ),
+            }
+            for name, race in sorted(
+                {(r["context"]["map_name"], r["context"]["enemy_race"]) for r in games}
+            )
+        ],
+        "window_limit": 50,
+        "minimum_duration_s": 180,
+        "signals": signals,
+        "interpretation": "Same engine/controller/policy/difficulty/speed/time limit; maps/races may vary. Repeated conditions are not independent evidence. Signals are associations, never proof of improvement. Short diagnostics excluded; missing metrics are unknown.",
+    }
 
 
 def jev_summary(experience: dict) -> str:

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import plugin from './server.ts';
-import { confined, scanMatches, validateReplay } from './library.ts';
+import { confined, scanMatches, validateReplay, validateAnalysis } from './library.ts';
 
 const roots: string[] = [];
 const databases: DatabaseSync[] = [];
@@ -68,6 +68,24 @@ describe('replay discovery and confinement', () => {
   });
 });
 describe('saved review and served replay', () => {
+  it('reads completed analysis without calling models and rejects escaped paths', async () => {
+    const { root, run } = await project(); const db = new DatabaseSync(':memory:'); databases.push(db);
+    const analysis = { schema_version: 1, status: 'offline',
+      review: { summary: 'Supply forecasting needs evaluation.', strengths: [], findings: [], missing_evidence: [] },
+      evidence: { facts: { 'metrics.observed_supply_blocked_s': 30 }, warnings: [],
+        general_patterns: { matches: 1, conditions: 1, maps: ['AcropolisLE'], races: ['Zerg'] } } };
+    await writeFile(join(run, 'analysis.json'), JSON.stringify(analysis));
+    const instance = host(root, db); await plugin(instance.api);
+    const match = (await instance.call('list')).matches[0];
+    expect(match.analysisStatus).toBe('offline');
+    expect(await instance.call('analysis', { id: match.id })).toEqual(analysis);
+    await expect(instance.call('analysis', { id: '../../.env' })).rejects.toThrow('Invalid replay id');
+    expect(() => validateAnalysis({ ...analysis, review: { ...analysis.review, findings: 'invalid' } })).toThrow('Unsupported');
+    await rm(join(run, 'analysis.json'));
+    await writeFile(join(root, 'secret.json'), JSON.stringify(analysis));
+    await symlink(join(root, 'secret.json'), join(run, 'analysis.json'));
+    await expect(instance.call('analysis', { id: match.id })).rejects.toThrow('outside');
+  });
   it('persists bookmarks and notes across a plugin reload and bounds annotations', async () => {
     const { root } = await project(); const db = new DatabaseSync(':memory:'); databases.push(db);
     const first = host(root, db); await plugin(first.api);

@@ -234,7 +234,15 @@ class Mind:
             self.trace("s2_discarded", {"t": snap.time_s, "age_s": age})
             return
         self.plan = result
-        self.trace("s2", {"t": round(snap.time_s, 1), **self.plan.model_dump(mode="json")})
+        self.trace(
+            "s2",
+            {
+                "t": round(snap.time_s, 1),
+                "requested_t": self._s2_at,
+                "age_s": age,
+                **self.plan.model_dump(mode="json"),
+            },
+        )
 
     async def close(self) -> None:
         if self._closed:

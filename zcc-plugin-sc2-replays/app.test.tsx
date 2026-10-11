@@ -9,6 +9,24 @@ const match = { id: '123', folder: 'first/match', map: 'AcropolisLE', result: 'V
   ready: true, memorySaved: true, offline: false, replayFile: 'replay.SC2Replay', favorite: false, note: '', bookmarks: [] };
 
 describe('replay studio', () => {
+  it('shows evidence, uncertainty and controlled validation for post-game findings', async () => {
+    const slot = renderSlot(app.navPanels[0]!, { pluginId: 'sc2-replays', subPath: '' }, {
+      rpc: { list: () => ({ project: 'SC2 test', matches: [{ ...match, analysisStatus: 'complete' }], job: null }),
+        analysis: () => ({ status: 'complete', review: { summary: 'One win is not general evidence.', strengths: [], missing_evidence: [],
+          findings: [{ priority: 'high', category: 'supply', hypothesis: 'Forecast production-driven supply needs.',
+            proposed_change: 'Account for pending depots.', validation: 'Test across held-out seeds and maps.',
+            uncertainty: 'No causal effect established.', evidence_ids: ['metrics.observed_supply_blocked_s'] }] },
+          evidence: { facts: { 'metrics.observed_supply_blocked_s': 30 }, warnings: [],
+            general_patterns: { matches: 1, conditions: 1, maps: ['AcropolisLE'], races: ['Zerg'] } } }) }
+    });
+    await slot.findByText('OpenAI review ready');
+    fireEvent.click(screen.getByText('OpenAI review ready').parentElement!);
+    await slot.findByText('Forecast production-driven supply needs.');
+    expect(screen.getByText(/No causal effect established/)).toBeDefined();
+    expect(screen.getByText(/held-out seeds and maps/)).toBeDefined();
+    expect(screen.getByText(/Suggestions do not change the bot automatically/)).toBeDefined();
+    slot.lifecycle.unmount();
+  });
   it('shows a playable match and lets search filter the library', async () => {
     const slot = renderSlot(app.navPanels[0]!, { pluginId: 'sc2-replays', subPath: '' }, {
       rpc: { list: () => ({ project: 'SC2 test', matches: [match], job: null }) }

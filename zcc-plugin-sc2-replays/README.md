@@ -8,6 +8,8 @@ Playback shows actual replay unit positions, terrain, health, economy, and recor
 
 This is **2D tactical playback**, sampled about every two game seconds with interpolated movement. It shows both players, including units the bot could not see. It does not reproduce the full SC2 graphical client. Strategic summaries and tactical choices are recorded evidence; review notes are your observations.
 
+Open **Post-game analysis** above the player to read a match's saved review. It shows measured scope, proposed improvements, exact evidence references, uncertainty, and controlled validation plans. New completed games produce this report automatically; `sc2mind-analyze` can review older recordings. The panel refreshes as a pending review completes. Reports remain provisional and never change bot policy automatically; reading them makes no model calls and leaves learning memory untouched.
+
 ## Replay preparation
 
 An existing `viewer/data.json` export opens immediately. Otherwise, click **Prepare replay**. The plugin runs `python -m sc2mind.replay` in the background through the configured engine; it does not play a new match, call models, or change the bot's learning database. Only one preparation runs at a time, with a ten-minute timeout. A compatible SC2 engine and map/cache data are required. Unloading the plugin cancels preparation.
@@ -23,6 +25,7 @@ CLI equivalents:
 ```sh
 zcc sc2-replays list
 zcc sc2-replays prepare <match-id>
+zcc sc2-replays analysis <match-id>  # read an existing saved report; no model call
 ```
 
 ## Install and develop

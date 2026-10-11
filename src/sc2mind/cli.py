@@ -102,6 +102,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Disable automatic opening selection; retain memory",
     )
     p.add_argument("--opening", choices=["auto", *OPENINGS], default="auto")
+    p.add_argument("--no-analysis", action="store_true", help="Skip the post-game review")
+    p.add_argument(
+        "--analysis-offline",
+        action="store_true",
+        help="Post-game measurements without a model call",
+    )
+    p.add_argument(
+        "--analysis-timeout",
+        type=_positive,
+        default=os.environ.get("ANALYSIS_TIMEOUT_S", "120"),
+        help="Wall-clock seconds allowed for the post-game model review",
+    )
     p.add_argument("--json", action="store_true", help="JSON output for --doctor or --simulate")
     p.add_argument(
         "--no-realtime", action="store_true", help="Step as fast as possible (models lag more)"
@@ -272,7 +284,40 @@ def main(argv: list[str] | None = None) -> int:
             "opening": opening,
             "memory_saved": mind.memory_saved,
             "selection_reason": selection_reason,
+            "match_id": stamp,
+            "context": asdict(mind.episode.context),
         }
+        (run_dir / "result.json").write_text(json.dumps(summary, indent=2) + "\n")
+        summary["analysis_status"] = "disabled" if args.no_analysis else "skipped"
+        if (
+            not args.no_analysis
+            and mind.episode.observations
+            and summary["result"] in {"Victory", "Defeat", "Tie"}
+        ):
+            try:
+                from .analysis import analyze_match
+
+                print("Game complete. Reviewing measured evidence…")
+                analysis = asyncio.run(
+                    analyze_match(
+                        run_dir,
+                        record=mind.episode.record(
+                            summary["result"], mind.plan.model_dump(mode="json")
+                        ),
+                        memory=memory,
+                        offline=cfg.offline or args.analysis_offline,
+                        model=cfg.openai_model,
+                        timeout_s=args.analysis_timeout,
+                    )
+                )
+                summary["analysis_status"] = analysis["status"]
+                print(f"Post-game review: {run_dir / 'analysis.md'} ({analysis['status']})")
+            except Exception as error:
+                summary["analysis_status"] = "failed"
+                logging.warning(
+                    "Post-game analysis unavailable: %s; match result retained",
+                    type(error).__name__,
+                )
         (run_dir / "result.json").write_text(json.dumps(summary, indent=2) + "\n")
         print(f"Result: {result}  (trace: {run_dir / 'trace.jsonl'})")
         return 0

@@ -166,6 +166,50 @@ past experience. `--opening` takes precedence over automatic selection.
 Failed launches, interrupted games, and scripted scenarios do not train the selector.
 Memory errors are logged and play continues with the code baseline and current state.
 
+## Automatic post-game analysis
+
+Every completed observed game now saves `analysis.json` and `analysis.md` beside
+its replay. After SC2 exits, live games make one bounded OpenAI review request;
+offline games produce a measured report without contacting a provider. Review
+failure preserves the game result and the measured report. The review never
+blocks `on_step`, changes gameplay code, or writes model suggestions into learning memory.
+
+Reports distinguish recorded facts, provisional improvement hypotheses, proposed
+experiments, and missing evidence. Structured output restricts evidence references
+to actual recorded IDs. Supply interruptions, mineral-bank duration, observation
+coverage, first expansion/stim milestones, issued investments, answer age, provider
+failures, and recorded plan changes help identify general mechanisms to investigate.
+Sparse historic traces retain explicit coverage limits; a plan's rationale is a
+model claim, not resource or combat telemetry.
+
+General signals use up to 50 recent completed matches with the same engine,
+controller/settings, policy, difficulty, realtime mode, and time limit while
+allowing different maps and races. Repeated map/race/seed conditions are counted
+separately from match totals. Games shorter than 180 seconds are diagnostic reports
+and do not support recurring gameplay signals. Missing old metrics remain unknown.
+Signals remain provisional; diversity can qualify a candidate for a controlled test,
+but never proves that a proposed change improves the bot.
+
+Code-derived recurring observations are available to subsequent strategic
+reasoning through memory. The existing opening selector keeps its stricter
+map/race comparisons. Model-written suggestions stay in the review for evaluation.
+
+```sh
+# Review an existing completed game without launching SC2:
+uv run --env-file .env sc2mind-analyze runs/<match>
+uv run sc2mind-analyze runs/<match> --offline
+# Existing reports are reused; explicitly replace/retry one:
+uv run --env-file .env sc2mind-analyze runs/<match> --force
+# During a live match, choose measured analysis only, or disable it:
+uv run --env-file .env sc2mind --analysis-offline
+uv run --env-file .env sc2mind --no-analysis
+```
+
+The model uses `OPENAI_MODEL`; `ANALYSIS_TIMEOUT_S` or `--analysis-timeout` sets its
+wall-clock budget (default 120 seconds, no automatic retries). In Zana, open
+**Post-game analysis** above the replay to read findings, cited evidence, uncertainty,
+and validation plans. Viewing a saved review makes no model calls.
+
 ## Measure match results
 
 Preview a reproducible schedule without launching games or making API calls:
@@ -182,6 +226,18 @@ uv run --env-file .env sc2mind-benchmark --games 3 --realtime
 ```
 
 Use `--races zerg protoss` and `--difficulties Easy Medium` to choose a matrix.
+Use `--maps` and a separate `--seed-start` range for broader, held-out evaluation:
+
+```sh
+uv run sc2mind-benchmark --offline --maps AcropolisLE TritonLE --seed-start 101 --games 3 --dry-run
+```
+
+That previews 18 games across two maps and three races without launching them.
+Remove `--dry-run` after installing the required maps to run the matrix. Hold the
+engine/difficulty/speed and memory settings equal, compare one change against an
+unchanged baseline, and measure regressions alongside wins. `--opening` can fix an
+opening profile. `--analysis-offline` avoids review API calls during live model
+benchmarks; `--no-analysis` skips review reports.
 Each match has its own trace, replay, and result report. `benchmark.json` records
 attempts, completed games, wins, win rate, and launch errors. Failed launches are
 excluded from the win-rate denominator. Games run sequentially.
@@ -204,6 +260,7 @@ shares experience between matches. Use the same context settings when comparing 
 | `bot.py` | SC2 callbacks, worker distribution, enemy death events, periodic snapshots |
 | `doctor.py` / `cli.py` | Startup checks and match/scenario entry points |
 | `scenarios.py` / `benchmark.py` | Snapshot regression cases and real-match evaluation |
+| `analysis.py` | Post-game measured evidence, constrained OpenAI reviews, and controlled-test hypotheses |
 
 ```sh
 uv run ruff check src tests scripts

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { definePluginApp, useRealtime, useRpc } from '@zana-ai/zcc-plugin-sdk/app';
-import type { Match, StoredReview } from './library.ts';
+import type { Match, StoredReview, PostGameReport } from './library.ts';
 import { styles } from './styles.ts';
 
 type LibraryMatch = Match & StoredReview;
@@ -9,6 +9,42 @@ type Library = { project: string; matches: LibraryMatch[]; job: {
 } | null };
 export const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+function PostGameAnalysis({ match }: { match: LibraryMatch }) {
+  const rpc = useRpc();
+  const [report, setReport] = useState<PostGameReport | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let active = true; setReport(null); setError('');
+    if (match.analysisStatus) void rpc.call('analysis', { id: match.id }).then(value => {
+      if (active) setReport(value as PostGameReport);
+    }, e => { if (active) setError(message(e)); });
+    return () => { active = false; };
+  }, [rpc, match.id, match.analysisStatus]);
+  const sample = report?.evidence.general_patterns;
+  const blocked = report?.evidence.facts['metrics.observed_supply_blocked_s'];
+  return <details className="sc2-analysis">
+    <summary>Post-game analysis <span>{match.analysisStatus === 'complete' ? 'OpenAI review ready' :
+      match.analysisStatus === 'pending' ? 'Reviewing…' : match.analysisStatus ? 'Measured evidence ready' : 'Awaiting a report'}</span></summary>
+    <div className="sc2-analysis-body">{error ? <p role="alert">{error}</p> : report ? <>
+      <p className="sc2-analysis-summary">{report.review.summary}</p>
+      <p className="sc2-analysis-scope">{sample?.matches} eligible matches · {sample?.conditions} distinct conditions · {sample?.maps.length} maps · {sample?.races.length} races
+        {typeof blocked === 'number' && ` · ${blocked.toFixed(1)}s observed supply blocks`}</p>
+      <p className="sc2-analysis-limit">Provisional hypotheses for controlled tests. Suggestions do not change the bot automatically.</p>
+      <p className="sc2-analysis-limit">Test one change against the unchanged baseline across at least two maps, all three races, and held-out seeds. Keep engine, difficulty, speed and memory settings equal; check regressions alongside wins.</p>
+      {report.status === 'failed' && <p>The model review was unavailable; measured analysis was retained.</p>}
+      {report.review.strengths.length > 0 && <div><h3>What worked</h3><ul>{report.review.strengths.map((s, i) => <li key={i}>{s}</li>)}</ul></div>}
+      {report.review.findings.map((finding, i) => <article className="sc2-finding" key={i}>
+        <div className="sc2-eyebrow">{finding.priority} priority · {finding.category}</div>
+        <h3>{finding.hypothesis}</h3><p><b>Try:</b> {finding.proposed_change}</p>
+        <p><b>Test:</b> {finding.validation}</p><p className="sc2-analysis-limit"><b>Uncertainty:</b> {finding.uncertainty}</p>
+        <details><summary>Recorded evidence</summary><ul>{finding.evidence_ids.map(ref =>
+          <li key={ref}><code>{ref}</code>: {JSON.stringify(report.evidence.facts[ref])}</li>)}</ul></details>
+      </article>)}
+      <details><summary>Missing evidence and limits</summary><ul>{[...new Set([...report.evidence.warnings, ...report.review.missing_evidence])].map((s, i) => <li key={i}>{s}</li>)}</ul></details>
+    </> : <p>{match.analysisStatus ? 'Reading the saved report…' : 'New completed games save their analysis here automatically. Existing matches can be reviewed with sc2mind-analyze.'}</p>}</div>
+  </details>;
+}
 
 function Review({ match, time, busy, save, seek }: {
   match: LibraryMatch; time: number; busy: boolean;
@@ -134,6 +170,7 @@ export function ReplayStudio({ pluginId }: { pluginId: string }) {
         <button aria-label={match.favorite ? 'Remove from favorites' : 'Add to favorites'} aria-pressed={match.favorite} disabled={busy}
           onClick={() => { void save({ action: 'favorite', value: !match.favorite }).catch(e => setError(message(e))); }}>{match.favorite ? '★ Favorited' : '☆ Favorite'}</button>
         <a href={`${prefix}/download?id=${match.id}`} download="replay.SC2Replay">Download .SC2Replay</a></div></div>
+      <PostGameAnalysis key={match.id} match={match} />
       {match.ready ? <iframe key={`${match.id}:${viewerGeneration}`} ref={frame} title={`Tactical replay of ${match.map}`}
         src={`${prefix}/viewer?id=${match.id}`} className="sc2-frame" style={{ height: frameHeight }} /> : <div className="sc2-prepare"><div className="sc2-eyebrow">Recorded match</div><h2>Make this replay watchable.</h2>
         <p>Read unit movement and terrain from the saved SC2 replay. The engine runs in the background; no new match is played.</p>

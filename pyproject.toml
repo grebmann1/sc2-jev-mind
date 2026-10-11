@@ -14,6 +14,7 @@ dependencies = [
 [project.scripts]
 sc2mind = "sc2mind.cli:main"
 sc2mind-benchmark = "sc2mind.benchmark:main"
+sc2mind-analyze = "sc2mind.analysis:main"
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.11"]

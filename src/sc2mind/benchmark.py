@@ -7,16 +7,25 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .cli import DIFFICULTIES
+from .cli import DIFFICULTIES, _seed
 from .cli import main as play
+from .learning import OPENINGS
 
 
-def match_schedule(races: list[str], difficulties: list[str], games: int) -> list[dict]:
+def match_schedule(
+    races: list[str],
+    difficulties: list[str],
+    games: int,
+    *,
+    maps: list[str] | None = None,
+    seed_start: int = 1,
+) -> list[dict]:
     return [
-        {"enemy": race, "difficulty": difficulty, "seed": seed}
+        {"enemy": race, "difficulty": difficulty, "seed": seed, **({"map": name} if name else {})}
+        for name in (maps or [None])
         for difficulty in difficulties
         for race in races
-        for seed in range(1, games + 1)
+        for seed in range(seed_start, seed_start + games)
     ]
 
 
@@ -43,7 +52,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--difficulties", nargs="+", choices=DIFFICULTIES, default=["Medium"])
     parser.add_argument("--games", type=int, default=3, help="Games per race/difficulty")
     parser.add_argument("--map", default="AcropolisLE")
+    parser.add_argument("--maps", nargs="+", help="Cross-map evaluation; overrides --map")
+    parser.add_argument(
+        "--seed-start",
+        type=_seed,
+        default=1,
+        help="First seed; use a separate range for held-out evaluation",
+    )
+    parser.add_argument("--opening", choices=["auto", *OPENINGS], default="auto")
     parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--no-analysis", action="store_true")
+    parser.add_argument("--analysis-offline", action="store_true")
     parser.add_argument(
         "--dry-run", action="store_true", help="Print match schedule without launching"
     )
@@ -62,7 +81,12 @@ def main(argv: list[str] | None = None) -> int:
     realtime = args.realtime if args.realtime is not None else not args.offline
     if args.games < 1:
         parser.error("--games must be positive")
-    schedule = match_schedule(args.races, args.difficulties, args.games)
+    if args.seed_start + args.games - 1 > 2**32 - 1:
+        parser.error("seed range must fit unsigned 32-bit integers")
+    maps = list(dict.fromkeys(args.maps or [args.map]))
+    schedule = match_schedule(
+        args.races, args.difficulties, args.games, maps=maps, seed_start=args.seed_start
+    )
     if args.dry_run:
         print(
             json.dumps(
@@ -79,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
         cfg = Config.from_env(offline=args.offline)
     except ValueError as error:
         parser.error(str(error))
-    checks = preflight(args.map, cfg)
+    checks = [check for name in maps for check in preflight(name, cfg)]
     if not all(c.ok for c in checks):
         for check in checks:
             if not check.ok:
@@ -92,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
         directory = root / str(index + 1)
         command = [
             "--map",
-            args.map,
+            match["map"],
             "--enemy",
             match["enemy"],
             "--difficulty",
@@ -101,9 +125,15 @@ def main(argv: list[str] | None = None) -> int:
             str(match["seed"]),
             "--runs-dir",
             str(directory),
+            "--opening",
+            args.opening,
         ]
         if args.offline:
             command.append("--offline")
+        if args.no_analysis:
+            command.append("--no-analysis")
+        if args.analysis_offline:
+            command.append("--analysis-offline")
         if args.learn:
             command.extend(["--memory-dir", args.memory_dir])
         else:
@@ -122,6 +152,9 @@ def main(argv: list[str] | None = None) -> int:
             "offline": args.offline,
             "realtime": realtime,
             "map": args.map,
+            "maps": maps,
+            "seed_start": args.seed_start,
+            "opening": args.opening,
             "planned": len(schedule),
             "learning_enabled": args.learn,
             "matches": records,
