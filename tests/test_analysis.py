@@ -151,7 +151,17 @@ def test_squad_evidence_reports_observed_counts_and_provider_failures(run):
     packet = evidence_packet(run, None, None)
     assert packet["facts"]["scouting.visits"] == 1
     assert packet["facts"]["execution.squad_losses"] == {"scout": 1}
-    assert packet["providers"]["squad_harass"]["stale_answers"] == 1
+    assert packet["providers"]["squad_harass"]["stale_answers"] == 0
+    assert packet["providers"]["squad_harass"]["unclassified_discards"] == 1
+    assert not any(f.category == "reliability" for f in measured_review(packet).findings)
+    trace = JsonlTrace(run / "trace.jsonl")
+    trace("squad_error", {"t": 25, "role": "main", "error": "TimeoutError"})
+    trace("squad_discarded", {"role": "scout", "requested_t": 26, "reason": "assignment_changed"})
+    trace.close()
+    packet = evidence_packet(run, None, None)
+    finding = next(f for f in measured_review(packet).findings if f.category == "reliability")
+    assert finding.evidence_ids == ["providers.squad_main.errors"]
+    assert packet["providers"]["squad_scout"]["assignment_discards"] == 1
 
 
 def test_historical_trace_does_not_invent_zero_scouting_metrics(run):

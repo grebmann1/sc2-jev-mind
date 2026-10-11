@@ -162,7 +162,18 @@ class Mind:
                 or o.identity != identity
                 or o.time_s - requested_at > self.cfg.squad_max_age_s
             ):
-                self.trace("squad_discarded", {"role": role.value, "requested_t": requested_at})
+                self.trace(
+                    "squad_discarded",
+                    {
+                        "role": role.value,
+                        "requested_t": requested_at,
+                        "reason": "inactive"
+                        if o is None
+                        else "assignment_changed"
+                        if o.identity != identity
+                        else "too_old",
+                    },
+                )
                 continue
             if (
                 answer.confidence >= self.cfg.s1_min_confidence

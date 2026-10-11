@@ -40,6 +40,8 @@ production. Respect implementation_capabilities: this bot does not swap attached
 add-ons. Proposed/applied choice differences do not measure add-on oscillations,
 plan churn, or production utilization. Use direct measures, or propose instrumentation.
 Game-time answer age is not wall-clock API latency. Missing/low-coverage data is unknown.
+Squad reassignment discards are expected safety checks, not provider latency failures.
+Historical squad discards without a reason remain unclassified.
 Prefer general mechanisms (supply forecasting, spending, scouting, production,
 defense, plan stability, provider reliability) over map-, opponent-, or timestamp-specific
 build orders. A victory can still expose weaknesses. One match cannot prove improvement.
@@ -217,13 +219,22 @@ def evidence_packet(run_dir: Path, record: dict | None, memory: MemoryStore | No
             r.get("kind") in ("squad_error", "squad_discarded") and r.get("role") == role
             for r in rows
         ):
+            discards = [
+                r for r in rows if r.get("kind") == "squad_discarded" and r.get("role") == role
+            ]
             values = {
                 "collected_answers": len(answers),
                 "errors": sum(
                     r.get("kind") == "squad_error" and r.get("role") == role for r in rows
                 ),
-                "stale_answers": sum(
-                    r.get("kind") == "squad_discarded" and r.get("role") == role for r in rows
+                "stale_answers": sum(r.get("reason") == "too_old" for r in discards),
+                "discarded_answers": len(discards),
+                "assignment_discards": sum(
+                    r.get("reason") in ("inactive", "assignment_changed") for r in discards
+                ),
+                "unclassified_discards": sum(
+                    r.get("reason") not in ("inactive", "assignment_changed", "too_old")
+                    for r in discards
                 ),
             }
             providers[f"squad_{role}"] = values
@@ -317,7 +328,7 @@ def evidence_packet(run_dir: Path, record: dict | None, memory: MemoryStore | No
         "implementation_capabilities": {
             "units": ["Marine", "Marauder"],
             "addons": "Constructs Tech Labs/Reactors on eligible bare Barracks; no lifting, swapping or conversion of attached add-ons.",
-            "execution": "SCVs/supply/infantry production and defensive overrides run in code; models select legal investments, stance and plan goals.",
+            "execution": "SCVs/supply/infantry production and safety overrides run in code; models select legal investments, stance and plan goals. When enabled, independent Jev main/scout/harass clients choose bounded squad maneuvers and local focus classes with exclusive unit ownership.",
             "answer_differences": "Proposed versus accepted choices can differ due to confidence, legality or retained decisions. Accepted stance is recorded before the per-frame defensive override.",
         },
         "warnings": warnings,
@@ -357,18 +368,19 @@ def measured_review(packet: dict) -> Review:
                 uncertainty="A bank of at least 800 minerals can reflect expansion/upgrade reservations; current observations do not establish idle production.",
             )
         )
-    if sum(p["errors"] + p["stale_answers"] for p in packet["providers"].values()):
+    reliability_evidence = [
+        f"providers.{name}.{key}"
+        for name, values in packet["providers"].items()
+        for key in ("errors", "stale_answers")
+        if values[key]
+    ]
+    if reliability_evidence:
         findings.append(
             Finding(
                 category="reliability",
                 priority="high",
                 hypothesis="Provider errors or stale answers may reduce the useful coverage of model decisions.",
-                evidence_ids=[
-                    "providers.s1.errors",
-                    "providers.s2.errors",
-                    "providers.s1.stale_answers",
-                    "providers.s2.stale_answers",
-                ],
+                evidence_ids=reliability_evidence,
                 proposed_change="Measure wall-clock request latency and useful reply rate; compare bounded timeouts/cadence against the current fallback policy.",
                 validation=experiments,
                 uncertainty="Game-time answer age differs from API wall latency; no causal effect on result has been measured.",

@@ -63,13 +63,30 @@ async def test_parallel_roles_do_not_wait_for_slow_scout_or_overlap_themselves()
 async def test_answer_for_old_membership_cannot_control_new_units():
     events = []
     mind = make_mind({Role.MAIN: Brain(MicroMode.RETREAT)})
-    mind.trace = lambda kind, data: events.append(kind)
+    mind.trace = lambda kind, data: events.append((kind, data))
     try:
         mind.tick_squads([observation()])
         await asyncio.sleep(0)
         result = mind.tick_squads([observation(tags=(3,), time_s=0.2)])
         assert result[Role.MAIN].mode is MicroMode.ADVANCE
-        assert "squad_discarded" in events
+        assert next(data for kind, data in events if kind == "squad_discarded")["reason"] == (
+            "assignment_changed"
+        )
+    finally:
+        await mind.close()
+
+
+async def test_expired_response_is_classified_separately_from_assignment_change():
+    events = []
+    mind = make_mind({Role.MAIN: Brain()})
+    mind.trace = lambda kind, data: events.append((kind, data))
+    try:
+        mind.tick_squads([observation()])
+        await asyncio.sleep(0)
+        mind.tick_squads([observation(time_s=10)])
+        assert next(data for kind, data in events if kind == "squad_discarded")["reason"] == (
+            "too_old"
+        )
     finally:
         await mind.close()
 
