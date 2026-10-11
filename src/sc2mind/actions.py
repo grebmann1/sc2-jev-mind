@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from .state import Snapshot
 
 
-class Invest(str, Enum):
+class Invest(StrEnum):
     """One investment priority per System 1 tick. Units, SCVs and depots are code reflexes."""
 
     EXPAND = "expand"
@@ -21,7 +21,7 @@ class Invest(str, Enum):
     NONE = "none"
 
 
-class Stance(str, Enum):
+class Stance(StrEnum):
     ATTACK = "attack"
     DEFEND = "defend"
     RALLY = "rally"
@@ -55,15 +55,19 @@ def legal_investments(s: Snapshot) -> list[Invest]:
     """Prerequisites only, not affordability: choosing an unaffordable option means 'save for it'."""
     legal: list[Invest] = []
     bases = max(s.townhalls, 1)
-    if s.townhalls_pending == 0 and s.townhalls < 6:
+    if s.townhalls > 0 and s.townhalls_pending == 0 and s.townhalls < 6:
         legal.append(Invest.EXPAND)
-    if s.supply_cap > 15 and s.barracks + s.barracks_pending < MAX_BARRACKS_PER_BASE * bases:
+    if (
+        s.depots > 0
+        and s.supply_cap > 15
+        and s.barracks + s.barracks_pending < MAX_BARRACKS_PER_BASE * bases
+    ):
         legal.append(Invest.BARRACKS)
-    if s.refineries < MAX_REFINERIES_PER_BASE * s.townhalls:
+    if s.refineries + s.refineries_pending < MAX_REFINERIES_PER_BASE * s.townhalls:
         legal.append(Invest.REFINERY)
-    if s.barracks_bare > 0 and s.refineries > 0:
+    if s.barracks_bare > s.techlabs_pending + s.reactors_pending and s.refineries > 0:
         legal.extend([Invest.TECHLAB, Invest.REACTOR])
-    if s.barracks > 0 and s.engbays == 0:
+    if s.barracks > 0 and s.engbays + s.engbays_pending == 0:
         legal.append(Invest.ENGBAY)
     if s.techlabs > 0 and s.stim == "none":
         legal.append(Invest.STIM)
@@ -84,7 +88,42 @@ def legal_stances(s: Snapshot) -> list[Stance]:
 
 def safety_override(s: Snapshot, stance: Stance) -> Stance:
     """Deterministic policy that outranks both models."""
+    if s.army_supply == 0:
+        return Stance.RALLY
     if s.base_threatened and stance in (Stance.ATTACK, Stance.RALLY):
-        if s.army_supply <= s.enemy_army_supply_est:
+        threat_supply = (
+            s.enemy_army_supply_est
+            if s.enemy_supply_near_base is None
+            else s.enemy_supply_near_base
+        )
+        if s.army_supply <= threat_supply:
             return Stance.DEFEND
     return stance
+
+
+def baseline_investment(s: Snapshot) -> Invest:
+    """A progressing bio build order used by the offline baseline; policy stays in code."""
+    legal = legal_investments(s)
+    priorities: list[Invest] = []
+    barracks = s.barracks + s.barracks_pending
+    gas = s.refineries + s.refineries_pending
+    if barracks < 1:
+        priorities.append(Invest.BARRACKS)
+    if barracks > 0 and gas < 1:
+        priorities.append(Invest.REFINERY)
+    if s.techlabs + s.techlabs_pending < 1 and barracks > 0:
+        priorities.append(Invest.TECHLAB)
+    if not s.base_threatened and s.workers >= 20 and s.townhalls < 2:
+        priorities.append(Invest.EXPAND)
+    if barracks < min(2 * max(s.townhalls, 1), 8):
+        priorities.append(Invest.BARRACKS)
+    priorities.append(Invest.STIM)
+    if s.techlabs + s.techlabs_pending > 0 and s.reactors + s.reactors_pending < barracks - 1:
+        priorities.append(Invest.REACTOR)
+    if barracks > 0 and gas < s.townhalls:
+        priorities.append(Invest.REFINERY)
+    if s.army_supply >= 16:
+        priorities.extend([Invest.ENGBAY, Invest.WEAPONS1])
+    if not s.base_threatened and s.workers >= 16 * s.townhalls and s.townhalls < 4:
+        priorities.append(Invest.EXPAND)
+    return next((a for a in priorities if a in legal), Invest.NONE)

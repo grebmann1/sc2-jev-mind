@@ -37,6 +37,14 @@ class Snapshot:
     enemy_army_supply_est: int = 0
     enemy_structures_seen: int = 0
     enemies_near_base: int = 0
+    # Completed prerequisites and work in progress, kept distinct from supply cap.
+    depots: int = 1
+    depots_pending: int = 0
+    refineries_pending: int = 0
+    techlabs_pending: int = 0
+    reactors_pending: int = 0
+    engbays_pending: int = 0
+    enemy_supply_near_base: float | None = None
 
     @property
     def base_threatened(self) -> bool:
@@ -45,7 +53,7 @@ class Snapshot:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
-    def to_jev_state(self, plan_summary: str) -> dict[str, str]:
+    def to_jev_state(self, plan_summary: str, memory_summary: str = "") -> dict[str, str]:
         """Flat, short text fields: Jev works best on small, legible state."""
 
         def fmt(d: dict[str, int]) -> str:
@@ -69,34 +77,53 @@ class Snapshot:
             ),
             "threat": f"{self.enemies_near_base} enemy units near our bases",
             "strategic_plan": plan_summary,
+            "experience_memory": memory_summary[:650],
         }
 
 
 class EnemyMemory:
-    """Remembers the most of each enemy unit type seen at once (fog of war)."""
+    """Track individual enemy tags, expire old sightings, and forget confirmed deaths."""
 
-    def __init__(self) -> None:
-        self.max_seen: dict[str, int] = {}
-        self.supply_per_type: dict[str, float] = {}
+    def __init__(self, max_age_s: float = 120.0) -> None:
+        self.max_age_s = max_age_s
+        self.units: dict[int, tuple[str, float, float]] = {}
         self.structures: set[int] = set()
+        self.race = "Unknown"
 
-    def update(self, bot: "BotAI") -> None:
-        counts: dict[str, int] = {}
+    def update(self, bot: BotAI) -> None:
+        for unit in (*bot.enemy_units, *bot.enemy_structures):
+            race = getattr(getattr(unit, "race", None), "name", "Unknown")
+            if race in {"Terran", "Protoss", "Zerg"}:
+                self.race = race
+                break
         for u in bot.enemy_units:
-            if u.name in WORKER_NAMES:
+            if u.name in WORKER_NAMES or u.is_hallucination:
                 continue
-            counts[u.name] = counts.get(u.name, 0) + 1
-            self.supply_per_type[u.name] = bot.calculate_supply_cost(u.type_id)
-        for name, n in counts.items():
-            self.max_seen[name] = max(self.max_seen.get(name, 0), n)
+            self.units[u.tag] = (u.name, bot.calculate_supply_cost(u.type_id), bot.time)
+        self.units = {
+            tag: sighting
+            for tag, sighting in self.units.items()
+            if bot.time - sighting[2] <= self.max_age_s
+        }
         self.structures.update(s.tag for s in bot.enemy_structures)
+
+    def forget(self, tag: int) -> None:
+        self.units.pop(tag, None)
+        self.structures.discard(tag)
+
+    @property
+    def counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for name, _, _ in self.units.values():
+            counts[name] = counts.get(name, 0) + 1
+        return counts
 
     @property
     def supply_est(self) -> int:
-        return int(sum(n * self.supply_per_type.get(k, 1) for k, n in self.max_seen.items()))
+        return int(sum(supply for _, supply, _ in self.units.values()))
 
 
-def snapshot_from_bot(bot: "BotAI", memory: EnemyMemory) -> Snapshot:
+def snapshot_from_bot(bot: BotAI, memory: EnemyMemory) -> Snapshot:
     from sc2.ids.unit_typeid import UnitTypeId as U
     from sc2.ids.upgrade_id import UpgradeId
 
@@ -110,10 +137,17 @@ def snapshot_from_bot(bot: "BotAI", memory: EnemyMemory) -> Snapshot:
     army_types = {U.MARINE: 1, U.MARAUDER: 2}
     army = {t.name.title(): bot.units(t).amount for t in army_types if bot.units(t).amount}
     near_base = 0
+    local_supply = 0.0
     if bot.townhalls:
-        near_base = bot.enemy_units.filter(
-            lambda u: bot.townhalls.closest_distance_to(u) < 20
-        ).amount
+        threats = bot.enemy_units.filter(
+            lambda u: (
+                not u.is_hallucination
+                and (u.can_attack_ground or u.can_attack_air)
+                and bot.townhalls.closest_distance_to(u) < 20
+            )
+        )
+        near_base = threats.amount
+        local_supply = sum(bot.calculate_supply_cost(u.type_id) for u in threats)
 
     return Snapshot(
         time_s=bot.time,
@@ -129,15 +163,22 @@ def snapshot_from_bot(bot: "BotAI", memory: EnemyMemory) -> Snapshot:
         barracks_bare=rax.ready.filter(lambda r: not r.has_add_on).amount,
         techlabs=bot.structures(U.BARRACKSTECHLAB).ready.amount,
         reactors=bot.structures(U.BARRACKSREACTOR).ready.amount,
-        refineries=bot.gas_buildings.amount,
+        refineries=bot.gas_buildings.ready.amount,
         engbays=bot.structures(U.ENGINEERINGBAY).ready.amount,
         stim=upgrade_state(UpgradeId.STIMPACK),
         weapons1=upgrade_state(UpgradeId.TERRANINFANTRYWEAPONSLEVEL1),
         army=army,
         army_supply=sum(bot.units(t).amount * s for t, s in army_types.items()),
-        enemy_race=bot.enemy_race.name,
-        enemy_army_seen=dict(memory.max_seen),
+        enemy_race=memory.race if bot.enemy_race.name == "Random" else bot.enemy_race.name,
+        enemy_army_seen=memory.counts,
         enemy_army_supply_est=memory.supply_est,
         enemy_structures_seen=len(memory.structures),
         enemies_near_base=near_base,
+        depots=bot.structures.of_type({U.SUPPLYDEPOT, U.SUPPLYDEPOTLOWERED}).ready.amount,
+        depots_pending=int(bot.already_pending(U.SUPPLYDEPOT)),
+        refineries_pending=int(bot.already_pending(U.REFINERY)),
+        techlabs_pending=int(bot.already_pending(U.BARRACKSTECHLAB)),
+        reactors_pending=int(bot.already_pending(U.BARRACKSREACTOR)),
+        engbays_pending=int(bot.already_pending(U.ENGINEERINGBAY)),
+        enemy_supply_near_base=local_supply,
     )

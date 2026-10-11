@@ -1,0 +1,36 @@
+{
+  "name": "zcc-plugin-sc2-replays",
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "zcc": {
+    "name": "SC2 Replays",
+    "description": "Replay studio for our SC2 AI: tactical playback, recorded reasoning, bookmarks and match review.",
+    "branding": {
+      "icon": "Play"
+    },
+    "server": "./server.ts",
+    "app": "./app.tsx",
+    "skills": [
+      "skills"
+    ]
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@zana-ai/zcc-plugin-sdk": "file:vendor/zana-ai-zcc-plugin-sdk-0.1.0.tgz",
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "^19.0.0",
+    "jsdom": "^26.1.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "vitest": "^4.1.10",
+    "typescript": "^5.9.3",
+    "@types/node": "^24.0.0"
+  }
+}

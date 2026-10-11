@@ -1,0 +1,21 @@
+services:
+  bot:
+    platform: linux/amd64
+    build: .
+    init: true
+    network_mode: bridge
+    shm_size: 1gb
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      SC2PATH: /sc2
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      JEV_MODEL: ${JEV_MODEL:-jev-latest}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5}
+      SC2_ENGINE_RUNNER: ${SC2_ENGINE_RUNNER:-}
+    volumes:
+      - ${SC2_INSTALL_DIR:-./runtime/StarCraftII}:/sc2
+      - ./runs:/app/runs
+      - ./memory:/app/memory

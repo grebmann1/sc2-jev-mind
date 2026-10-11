@@ -3,7 +3,7 @@ name = "sc2mind"
 version = "0.1.0"
 description = "StarCraft II agent: TypeSafe Jev as fast System 1, an OpenAI model as the System 2 reasoner"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "burnysc2>=7.0",
     "typesafe-sdk>=0.7",
@@ -13,9 +13,10 @@ dependencies = [
 
 [project.scripts]
 sc2mind = "sc2mind.cli:main"
+sc2mind-benchmark = "sc2mind.benchmark:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.11"]
 
 [build-system]
 requires = ["hatchling"]
@@ -27,3 +28,10 @@ packages = ["src/sc2mind"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]

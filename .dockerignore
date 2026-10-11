@@ -1,0 +1,13 @@
+.git
+.venv
+memory
+.env
+.zcc
+runtime
+runs
+dist
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+zcc-plugin-sc2-replays

@@ -26,20 +26,35 @@ class DualMindBot(BotAI):
         snap = snapshot_from_bot(self, self.memory)
         invest, stance = self.mind.tick(snap)
 
+        # Rebalance before selecting builders/scouts so their orders aren't overwritten.
+        if iteration % 20 == 0:
+            await self.distribute_workers()
+        await self.executor.economy(self.mind.plan)
+
         reserve = (0, 0)
+        pending = invest
         if invest is not Invest.NONE:
-            if await self.executor.invest(invest):
+            if await self.executor.invest(invest, snap):
                 self.mind.invest_done()
+                pending = Invest.NONE
+                self.tracer("investment", {"t": self.time, "invest": invest.value})
             else:
                 reserve = self.executor.cost(invest)
 
-        await self.executor.reflexes(self.mind.plan, reserve)
+        self.executor.production(self.mind.plan, reserve, pending)
+        self.executor.scout()
         self.executor.army(stance, snap)
 
-        if iteration % 20 == 0:
-            await self.distribute_workers()
+        if iteration % 100 == 0:
+            self.tracer("snapshot", {"t": self.time, **snap.to_dict()})
+
+    async def on_unit_destroyed(self, unit_tag: int) -> None:
+        self.memory.forget(unit_tag)
 
     async def on_end(self, game_result: Result) -> None:
-        self.tracer("end", {"t": self.time, "result": game_result.name})
-        await self.mind.close()
-        self.tracer.close()
+        try:
+            self.tracer("end", {"t": self.time, "result": game_result.name})
+            await self.mind.finish_match(game_result.name)
+        finally:
+            await self.mind.close()
+            self.tracer.close()

@@ -20,3 +20,7 @@ class JsonlTrace:
 
     def close(self) -> None:
         self._f.close()
+
+    @property
+    def closed(self) -> bool:
+        return self._f.closed

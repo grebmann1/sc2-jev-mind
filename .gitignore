@@ -1,6 +1,11 @@
 .venv/
+memory/
 __pycache__/
 *.pyc
 .env
 runs/
 .pytest_cache/
+.ruff_cache/
+dist/
+runtime/
+.zcc/
