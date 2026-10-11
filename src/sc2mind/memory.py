@@ -56,6 +56,8 @@ class Episode:
         self.timeline: list[dict] = []
         self.investments: Counter = Counter()
         self.errors: Counter = Counter()
+        self.scout_visits: int | None = None
+        self.squad_losses: Counter = Counter()
         self.observations = 0
         self.peak_workers = self.peak_army_supply = self.peak_bases = 0
         self.supply_blocked_s = self.under_threat_s = 0.0
@@ -69,6 +71,8 @@ class Episode:
 
     def observe(self, snap: Snapshot, plan: dict) -> None:
         self.observations += 1
+        if "scout_visits" in snap.intelligence:
+            self.scout_visits = snap.intelligence["scout_visits"]
         self.context = self.context.for_race(snap.enemy_race)
         self.peak_workers = max(self.peak_workers, snap.workers)
         self.peak_army_supply = max(self.peak_army_supply, snap.army_supply)
@@ -116,6 +120,7 @@ class Episode:
                     "reactors": snap.reactors,
                     "stim": snap.stim,
                     "weapons1": snap.weapons1,
+                    "intelligence": json.loads(json.dumps(snap.intelligence)),
                 }
             )
             self.timeline = self.timeline[-200:]
@@ -131,6 +136,8 @@ class Episode:
             "observed_under_threat_s": round(self.under_threat_s, 1),
             "observed_time_s": round(self.observed_s, 1),
             "observations": self.observations,
+            "scout_visits": self.scout_visits,
+            "squad_losses": dict(self.squad_losses),
             "observed_mineral_bank_s": round(self.mineral_bank_s, 1),
             "peak_minerals": self.peak_minerals,
             "peak_gas": self.peak_gas,

@@ -45,6 +45,7 @@ class Snapshot:
     reactors_pending: int = 0
     engbays_pending: int = 0
     enemy_supply_near_base: float | None = None
+    intelligence: dict[str, Any] = field(default_factory=dict)
 
     @property
     def base_threatened(self) -> bool:
@@ -76,6 +77,7 @@ class Snapshot:
                 f"(est supply {self.enemy_army_supply_est}) structures_seen={self.enemy_structures_seen}"
             ),
             "threat": f"{self.enemies_near_base} enemy units near our bases",
+            "intelligence": str(self.intelligence)[:450],
             "strategic_plan": plan_summary,
             "experience_memory": memory_summary[:650],
         }
@@ -89,14 +91,48 @@ class EnemyMemory:
         self.units: dict[int, tuple[str, float, float]] = {}
         self.structures: set[int] = set()
         self.race = "Unknown"
+        from .intelligence import Intelligence
+
+        self.intel = Intelligence()
 
     def update(self, bot: BotAI) -> None:
-        for unit in (*bot.enemy_units, *bot.enemy_structures):
+        from .intelligence import Contact
+
+        visible_units = [
+            u for u in bot.enemy_units if getattr(u, "is_visible", True) and not u.is_hallucination
+        ]
+        visible_structures = [u for u in bot.enemy_structures if getattr(u, "is_visible", True)]
+        contacts = []
+        for u in (*visible_units, *visible_structures):
+            if hasattr(u, "position"):
+                contacts.append(
+                    Contact(
+                        u.tag,
+                        u.name,
+                        (u.position.x, u.position.y),
+                        bot.time,
+                        bot.calculate_supply_cost(u.type_id),
+                        u.name in WORKER_NAMES,
+                        u in visible_structures,
+                        getattr(u, "can_attack_ground", False)
+                        or getattr(u, "can_attack_air", False),
+                    )
+                )
+        homes = [(u.position.x, u.position.y) for u in getattr(bot, "townhalls", ())]
+        self.intel.observe(bot.time, contacts, homes)
+        seen_tags = {c.tag for c in contacts}
+        if hasattr(bot, "is_visible"):
+            from sc2.position import Point2
+
+            for tag, c in list(self.intel.contacts.items()):
+                if c.structure and tag not in seen_tags and bot.is_visible(Point2(c.position)):
+                    self.forget(tag)
+        for unit in (*visible_units, *visible_structures):
             race = getattr(getattr(unit, "race", None), "name", "Unknown")
             if race in {"Terran", "Protoss", "Zerg"}:
                 self.race = race
                 break
-        for u in bot.enemy_units:
+        for u in visible_units:
             if u.name in WORKER_NAMES or u.is_hallucination:
                 continue
             self.units[u.tag] = (u.name, bot.calculate_supply_cost(u.type_id), bot.time)
@@ -105,11 +141,12 @@ class EnemyMemory:
             for tag, sighting in self.units.items()
             if bot.time - sighting[2] <= self.max_age_s
         }
-        self.structures.update(s.tag for s in bot.enemy_structures)
+        self.structures.update(s.tag for s in visible_structures)
 
     def forget(self, tag: int) -> None:
         self.units.pop(tag, None)
         self.structures.discard(tag)
+        self.intel.forget(tag)
 
     @property
     def counts(self) -> dict[str, int]:
@@ -181,4 +218,5 @@ def snapshot_from_bot(bot: BotAI, memory: EnemyMemory) -> Snapshot:
         reactors_pending=int(bot.already_pending(U.BARRACKSREACTOR)),
         engbays_pending=int(bot.already_pending(U.ENGINEERINGBAY)),
         enemy_supply_near_base=local_supply,
+        intelligence=memory.intel.report(bot.time),
     )

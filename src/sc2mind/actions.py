@@ -127,3 +127,99 @@ def baseline_investment(s: Snapshot) -> Invest:
     if not s.base_threatened and s.workers >= 16 * s.townhalls and s.townhalls < 4:
         priorities.append(Invest.EXPAND)
     return next((a for a in priorities if a in legal), Invest.NONE)
+
+
+class Role(StrEnum):
+    MAIN = "main"
+    SCOUT = "scout"
+    HARASS = "harass"
+
+
+class MicroMode(StrEnum):
+    ADVANCE = "advance"
+    ENGAGE = "engage"
+    KITE = "kite"
+    HOLD = "hold"
+    RETREAT = "retreat"
+
+
+class Focus(StrEnum):
+    ANY = "any"
+    THREATS = "threats"
+    WORKERS = "workers"
+    STRUCTURES = "structures"
+
+
+SCOUT_REVISIT_S = 45.0
+INTEL_FRESH_S = 30.0
+MICRO_HEALTH_FLOOR = 0.35
+LOCAL_OVERMATCH_RATIO = 1.4
+HARASS_MAX_UNITS = 6
+MIN_MAIN_SUPPLY = 12
+
+
+def squad_sizes(s: Snapshot, marines: int) -> tuple[int, int]:
+    if s.base_threatened:
+        return 0, 0
+    scout = int(marines >= 8)
+    harass = min(HARASS_MAX_UNITS, marines // 5, max(0, marines - scout - MIN_MAIN_SUPPLY))
+    return scout, harass
+
+
+def squad_must_retreat(o) -> bool:
+    return (
+        o.health < MICRO_HEALTH_FLOOR
+        or (o.role is not Role.MAIN and o.base_threatened)
+        or (
+            o.away_from_home
+            and (o.unseen_threat or o.enemy_power > max(1, o.supply) * LOCAL_OVERMATCH_RATIO)
+        )
+    )
+
+
+def legal_squad_modes(o) -> list[MicroMode]:
+    if squad_must_retreat(o):
+        return [MicroMode.RETREAT]
+    modes = [MicroMode.RETREAT]
+    if not o.advancing or o.enemy_power > 0 or o.targets:
+        modes.append(MicroMode.HOLD)
+    if o.goal:
+        modes.append(MicroMode.ADVANCE)
+    if o.role is not Role.SCOUT and o.targets:
+        modes.extend([MicroMode.ENGAGE, MicroMode.KITE])
+    return modes
+
+
+def baseline_squad_mode(o) -> MicroMode:
+    if squad_must_retreat(o):
+        return MicroMode.RETREAT
+    if o.targets and o.role is not Role.SCOUT:
+        return MicroMode.ENGAGE
+    return MicroMode.ADVANCE if o.goal else MicroMode.HOLD
+
+
+def worker_target(suggested: int, bases: int) -> int:
+    return min(80, max(suggested, 16 * bases), 22 * bases)
+
+
+def local_enemy_power(supply: float, structure: bool) -> float:
+    return max(1, supply) + (4 if structure else 0)
+
+
+MICRO_DESCRIPTIONS = {
+    MicroMode.ADVANCE: "Follow this squad's assigned scouting, harassment or army objective",
+    MicroMode.ENGAGE: "Focus fire on visible, attackable local targets",
+    MicroMode.KITE: "Fire when ready, step away from threats during weapon cooldown",
+    MicroMode.HOLD: "Hold position while the local situation develops",
+    MicroMode.RETREAT: "Withdraw this squad to safety",
+}
+
+
+def pressure_stance(s: Snapshot, chosen: Stance, attack_target: int) -> Stance:
+    if (
+        chosen not in (Stance.RETREAT, Stance.DEFEND)
+        and not s.base_threatened
+        and s.army_supply >= max(1, attack_target)
+    ):
+        return Stance.ATTACK
+    return chosen

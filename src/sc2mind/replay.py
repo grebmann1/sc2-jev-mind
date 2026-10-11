@@ -32,6 +32,10 @@ def annotations(directory: Path) -> dict:
         "offline": result.get("offline", False),
         "plans": [r for r in trace if r.get("kind") == "s2"],
         "decisions": [r for r in trace if r.get("kind") == "s1"],
+        "squads": [r for r in trace if r.get("kind") == "squad"],
+        "scouting": [r for r in trace if r.get("kind") == "scout_visit"],
+        "squadOrders": [r for r in trace if r.get("kind") == "squad_order"],
+        "squadRosters": [r for r in trace if r.get("kind") == "squad_roster"],
     }
 
 
@@ -41,7 +45,19 @@ def write_export(output: Path, data: dict) -> None:
     metadata = {
         k: v
         for k, v in data.items()
-        if k not in ("frames", "terrain", "pathing", "types", "plans", "decisions")
+        if k
+        not in (
+            "frames",
+            "terrain",
+            "pathing",
+            "types",
+            "plans",
+            "decisions",
+            "squads",
+            "scouting",
+            "squadOrders",
+            "squadRosters",
+        )
     }
     metadata.update(
         frames=len(data["frames"]), plans=len(data["plans"]), decisions=len(data["decisions"])

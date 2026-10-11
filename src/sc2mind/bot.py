@@ -6,6 +6,7 @@ from sc2.data import Result
 from .actions import Invest
 from .executor import Executor
 from .mind import Mind
+from .squad_executor import SquadExecutor
 from .state import EnemyMemory, snapshot_from_bot
 from .trace import JsonlTrace
 
@@ -20,15 +21,23 @@ class DualMindBot(BotAI):
 
     async def on_start(self) -> None:
         self.executor = Executor(self)
+        self.squad_executor = SquadExecutor(self, self.executor, self.memory, self.tracer)
         self.tracer("start", {"map": self.game_info.map_name, "enemy_race": self.enemy_race.name})
 
     async def on_step(self, iteration: int) -> None:
         snap = snapshot_from_bot(self, self.memory)
         invest, stance = self.mind.tick(snap)
 
-        # Rebalance before selecting builders/scouts so their orders aren't overwritten.
+        if self.mind.cfg.multi_squad:
+            self.squad_executor.assign(snap)
+        # Keep the active worker scout out of mining redistribution and builder selection.
         if iteration % 20 == 0:
-            await self.distribute_workers()
+            workers = self.workers
+            try:
+                self.workers = workers.filter(lambda w: w.tag not in self.executor.reserved_workers)
+                await self.distribute_workers()
+            finally:
+                self.workers = workers
         await self.executor.economy(self.mind.plan)
 
         reserve = (0, 0)
@@ -42,14 +51,23 @@ class DualMindBot(BotAI):
                 reserve = self.executor.cost(invest)
 
         self.executor.production(self.mind.plan, reserve, pending)
-        self.executor.scout()
-        self.executor.army(stance, snap)
+        if self.mind.cfg.multi_squad:
+            observations = self.squad_executor.observations(snap, stance, self.mind.plan)
+            decisions = self.mind.tick_squads(observations)
+            self.squad_executor.execute(observations, decisions)
+        else:
+            self.executor.scout()
+            self.executor.army(stance, snap)
 
         if iteration % 100 == 0:
             self.tracer("snapshot", {"t": self.time, **snap.to_dict()})
 
     async def on_unit_destroyed(self, unit_tag: int) -> None:
         self.memory.forget(unit_tag)
+        if hasattr(self, "squad_executor"):
+            role = self.squad_executor.lost(unit_tag)
+            if role is not None and self.mind.episode:
+                self.mind.episode.squad_losses[role.value] += 1
 
     async def on_end(self, game_result: Result) -> None:
         try:

@@ -47,3 +47,8 @@ The official Zana SDK 0.1.0 is included as `vendor/zana-ai-zcc-plugin-sdk-0.1.0.
 Favorites, bookmarks, and notes live in the plugin's Zana-managed SQLite database under its plugin data directory. They survive source reloads and app restarts, independently of the bot's `memory/matches.sqlite3`. Uninstalling/clearing plugin data can remove them. Replay files and exports remain in the project. Viewing/reviewing a replay needs no API keys.
 
 See [LIVE_TEST.md](LIVE_TEST.md) for live verification and [ROADMAP.md](ROADMAP.md) for the feature brainstorm.
+
+New squad-enabled recordings include a **Parallel squad control** card with each
+group's orders and deployment. Green map rings identify reconnaissance units; amber
+rings identify harassment units. Ownership follows the recorded roster, including
+recalls and unit losses. Older recordings keep their existing playback layout.

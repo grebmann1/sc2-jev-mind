@@ -8,17 +8,19 @@ import math
 import os
 import sqlite3
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
 
+from .actions import Role
 from .config import Config
 from .doctor import preflight, report
 from .engine import engine_runner, resolve_engine_runner
 from .learning import OPENINGS, choose_opening, opening_plan
 from .memory import Episode, MatchContext, MemoryStore
 from .mind import Mind
+from .squads import JevSquadReflex, OfflineSquadReflex
 from .system1 import JevReflex, OfflineReflex
 from .system2 import OfflineReasoner, OpenAIReasoner
 from .trace import JsonlTrace
@@ -71,7 +73,7 @@ def _controller_id(cfg: Config) -> str:
         settings.pop("jev_model")
         settings.pop("openai_model")
     return json.dumps(
-        {"implementation": "offline-v2" if cfg.offline else "jev-openai-v2", "settings": settings},
+        {"implementation": "offline-v3" if cfg.offline else "jev-openai-v3", "settings": settings},
         sort_keys=True,
     )
 
@@ -82,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--enemy", default="random", choices=["terran", "zerg", "protoss", "random"])
     p.add_argument("--difficulty", default="Medium", choices=DIFFICULTIES)
     p.add_argument("--offline", action="store_true", help="Rule-based stand-ins for both models")
+    p.add_argument("--single-army", action="store_true", help="Disable independent squad brains")
     modes = p.add_mutually_exclusive_group()
     modes.add_argument("--doctor", action="store_true", help="Check setup without launching SC2")
     modes.add_argument(
@@ -142,6 +145,8 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     try:
         cfg = Config.from_env(offline=args.offline or args.simulate)
+        if args.single_army:
+            cfg = replace(cfg, multi_squad=False)
     except ValueError as error:
         print(f"Invalid configuration: {error}", file=sys.stderr)
         return 2
@@ -193,6 +198,7 @@ def main(argv: list[str] | None = None) -> int:
     from .bot import DualMindBot
 
     mind = None
+    squad_reflexes = {}
     reflex = reasoner = None
     try:
         context = MatchContext(
@@ -232,6 +238,13 @@ def main(argv: list[str] | None = None) -> int:
             if cfg.offline
             else OpenAIReasoner(cfg.openai_model, timeout_s=cfg.s2_timeout_s)
         )
+        if cfg.multi_squad:
+            for role in Role:
+                squad_reflexes[role] = (
+                    OfflineSquadReflex()
+                    if cfg.offline
+                    else JevSquadReflex(cfg.jev_model, timeout_s=cfg.s1_timeout_s)
+                )
         mind = Mind(
             cfg,
             reflex,
@@ -241,6 +254,7 @@ def main(argv: list[str] | None = None) -> int:
             episode=Episode(stamp, context, opening),
             initial_plan=opening_plan(opening),
             experience=experience,
+            squad_reflexes=squad_reflexes,
         )
         bot = DualMindBot(mind, trace)
         trace(
@@ -347,7 +361,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
 
             async def close_clients():
-                for client in (reflex, reasoner):
+                for client in (reflex, reasoner, *squad_reflexes.values()):
                     close = getattr(client, "close", None)
                     if close:
                         try:

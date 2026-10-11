@@ -10,7 +10,7 @@ from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.ids.upgrade_id import UpgradeId
 from sc2.position import Point2
 
-from .actions import Invest, Stance, legal_investments
+from .actions import Invest, Stance, legal_investments, worker_target
 from .state import EnemyMemory, Snapshot, snapshot_from_bot
 from .system2 import Plan
 
@@ -41,6 +41,10 @@ class Executor:
         self._search_target: Point2 | None = None
         self._searched: set[Point2] = set()
         self._addon_rax: int | None = None
+        self.reserved_workers: set[int] = set()
+        self.scan_target: Point2 | None = None
+        self.scan_reserve = False
+        self._last_scan = -1e9
 
     def _reserve_addon(self, a: Invest):
         if a not in (Invest.TECHLAB, Invest.REACTOR):
@@ -68,7 +72,9 @@ class Executor:
     def _builder(self, near):
         available = self.bot.workers.filter(
             lambda w: (
-                w.tag not in self.bot.unit_tags_received_action and (w.is_idle or w.is_gathering)
+                w.tag not in self.reserved_workers
+                and w.tag not in self.bot.unit_tags_received_action
+                and (w.is_idle or w.is_gathering)
             )
         )
         return available.closest_to(near) if available else None
@@ -163,7 +169,7 @@ class Executor:
 
         # Workers up to the plan's target.
         workers = bot.workers.amount + bot.already_pending(U.SCV)
-        target = min(plan.target_workers, 22 * bot.townhalls.ready.amount)
+        target = worker_target(plan.target_workers, bot.townhalls.ready.amount)
         for th in bot.townhalls.ready.idle:
             if th.tag in bot.unit_tags_received_action:
                 continue
@@ -177,9 +183,22 @@ class Executor:
                 if self._train(th, U.SCV):
                     workers += 1
 
+        reserved_scan_energy = False
         for orbital in bot.townhalls(U.ORBITALCOMMAND).ready:
             minerals = bot.mineral_field.closer_than(10, orbital)
-            if orbital.energy >= 50 and minerals:
+            if (
+                self.scan_target is not None
+                and orbital.energy >= 50
+                and bot.time - self._last_scan >= 10
+            ):
+                orbital(AbilityId.SCANNERSWEEP_SCAN, self.scan_target)
+                self._last_scan = bot.time
+                self.scan_target = None
+            elif orbital.energy >= 50 and minerals:
+                reserve_here = self.scan_reserve and not reserved_scan_energy
+                reserved_scan_energy = reserved_scan_energy or reserve_here
+                if reserve_here and orbital.energy < 100:
+                    continue
                 orbital(
                     AbilityId.CALLDOWNMULE_CALLDOWNMULE,
                     max(minerals, key=lambda m: m.mineral_contents),
@@ -298,7 +317,9 @@ class Executor:
         for u in army:
             nearby = bot.enemy_units.filter(
                 lambda e, unit=u: (
-                    not e.is_hallucination
+                    e.is_visible
+                    and e.can_be_attacked
+                    and not e.is_hallucination
                     and (
                         (e.is_flying and unit.can_attack_air)
                         or (not e.is_flying and unit.can_attack_ground)
@@ -313,8 +334,13 @@ class Executor:
         for u in army:
             if u.health_percentage < 0.6 or not self.bot.enemy_units.filter(
                 lambda e, unit=u: (
-                    (e.is_flying and unit.can_attack_air)
-                    or (not e.is_flying and unit.can_attack_ground)
+                    e.is_visible
+                    and e.can_be_attacked
+                    and (e.can_attack_ground or e.can_attack_air)
+                    and (
+                        (e.is_flying and unit.can_attack_air)
+                        or (not e.is_flying and unit.can_attack_ground)
+                    )
                 )
             ).closer_than(8, u):
                 continue

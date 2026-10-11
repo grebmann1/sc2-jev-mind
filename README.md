@@ -42,12 +42,44 @@ uv run sc2mind --offline --enemy zerg --difficulty Medium
 No model provider is contacted in offline mode. The bot builds supply, grows
 workers, upgrades command centers to orbitals, uses MULEs, expands, builds
 barracks with room for add-ons, trains infantry, and researches stim and weapons.
-An early SCV scouts the enemy start; the attacking army searches expansions when
-there are no visible enemy structures. Depots lower for our army and raise near enemies.
+A worker scout is replaced by an infantry scout as the army grows; reconnaissance
+revisits enemy starts and expansions. A small harassment group seeks observed enemy
+worker lines while the main army pushes or defends. Depots lower for our army and raise near enemies.
 
 `--map`, `--enemy`, `--difficulty`, `--seed`, `--runs-dir`, and
 `--game-time-limit` configure a match. The time limit defaults to 1,200 game seconds.
 `--no-realtime` runs as fast as SC2 permits; use realtime to evaluate model latency.
+
+## Parallel squad control
+
+The default controller has a macro Jev client plus three independent squad clients:
+main army, reconnaissance, and harassment. They share observed intelligence and the
+OpenAI strategy but own disjoint unit tags. Each active squad has at most one model
+request in flight; inactive groups make no calls. Decisions are refreshed every
+three game seconds, expire after six, and are discarded when membership or mission
+changes. Code continues issuing safe orders during slow or failed requests.
+
+Scouts repeatedly inspect safe expansion locations. The intelligence board records
+observed economy/tech, positions, sighting age, and movement toward or away from our
+bases. Direction is not proof of intent; missing sightings do not imply a weak enemy.
+Harassment uses surplus Marines, seeks observed worker lines, and can kite using
+weapon cooldowns. Low health, overwhelming local danger, and base threats override
+model decisions. The main army follows the strategic attack objective; target
+selection excludes fog snapshots and undetected units. Orbitals can scan for a
+nearby hidden attacker or a fogged structure, reserving one scan while the main army
+is away; other energy supports MULEs. Worker production grows with base capacity.
+
+`SQUAD_INTERVAL_S`, `SQUAD_MAX_AGE_S`, and `SC2MIND_MULTI_SQUAD` configure this mode.
+Use `--single-army` (also supported by the benchmark) to disable squad control for an
+ablation. This is not an exact reproduction of the earlier controller; compare the
+prior commit in a separate checkout for that. Controller/policy version 3 keeps its
+learning cohort separate from older games without deleting their memory.
+
+Squad decisions, ownership, orders, scout visits, and assigned-unit losses are
+recorded. Episode memory includes scouting history and squad losses. The Zana replay
+viewer shows each group's recorded mode and unit ownership; reading a replay makes
+no model calls. Combat outcomes, path reachability and actual damage still require
+further instrumentation for causal analysis.
 
 ## Headless Linux engine through Docker
 
@@ -101,7 +133,7 @@ docker compose run --rm bot --enemy zerg
 
 If the strategic model exceeds its default 30-second wall-clock budget, increase
 `S2_TIMEOUT_S` in `.env` (this host uses `90` for `gpt-5`). Calls stay in the
-background with at most one outstanding call per provider; SC2 keeps playing
+background with at most one outstanding call per brain; SC2 keeps playing
 with its current plan. Plans older than `S2_MAX_AGE_S` game seconds are discarded.
 
 | Setting | Default | Meaning |
@@ -254,6 +286,8 @@ shares experience between matches. Use the same context settings when comparing 
 | `system1.py` | Jev `AsyncTypeSafeClient.system_one`: Choice investment, Choice stance, Noul replan |
 | `system2.py` | Bounded Pydantic `Plan`; OpenAI `AsyncOpenAI().responses.parse` |
 | `mind.py` | Non-blocking scheduling, validation, timeouts, freshness, confidence, and shutdown |
+| `squads.py` / `squad_executor.py` | Independent Jev squad clients, exclusive unit ownership, scouting, harassment and micro |
+| `intelligence.py` | Bounded observed contacts, sighting age, army movement and scouting visits |
 | `memory.py` | Persistent SQLite episodes, observed lessons, comparable retrieval, bounded match timeline |
 | `learning.py` | Validated opening catalog and evidence-based exploration/selection |
 | `executor.py` | Supply/workers before investment; reserved production; queued reactors; scouting/combat |
@@ -280,9 +314,9 @@ until the real-match harness has been run.
 See [the implementation review](docs/review.md) for resolved findings and the remaining
 runtime validation limits.
 
-The first version has no medivacs, drops, detection, or squad control. Next gameplay
-work should follow real replay evidence: defend early rushes, add healing and air
-support, and tune the build and confidence policy against measured match results.
+The army currently has no Medivacs, drops, or mobile detectors. Next gameplay work
+should follow real replay evidence: add healing and air support, and tune the build
+and confidence policy against measured match results.
 
 SDK references: [TypeSafe's Python SDK](https://github.com/typesafe-ai/typesafe-sdk-python),
 [burnysc2 API](https://burnysc2.github.io/python-sc2/bot_ai/index.html), and

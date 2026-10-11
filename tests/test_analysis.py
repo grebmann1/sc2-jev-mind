@@ -141,6 +141,26 @@ async def test_offline_analysis_preserves_evidence_and_leaves_memory_untouched(r
     assert "held-out seeds" in (run / "analysis.md").read_text()
 
 
+def test_squad_evidence_reports_observed_counts_and_provider_failures(run):
+    trace = JsonlTrace(run / "trace.jsonl")
+    trace("squad_roster", {"t": 20, "role": "scout", "tags": ["1"]})
+    trace("scout_visit", {"t": 21, "position": [30, 40]})
+    trace("squad_loss", {"t": 22, "role": "scout", "tag": "1"})
+    trace("squad_discarded", {"role": "harass", "requested_t": 23})
+    trace.close()
+    packet = evidence_packet(run, None, None)
+    assert packet["facts"]["scouting.visits"] == 1
+    assert packet["facts"]["execution.squad_losses"] == {"scout": 1}
+    assert packet["providers"]["squad_harass"]["stale_answers"] == 1
+
+
+def test_historical_trace_does_not_invent_zero_scouting_metrics(run):
+    packet = evidence_packet(run, None, None)
+    assert "scouting.visits" not in packet["facts"]
+    assert "execution.squad_losses" not in packet["facts"]
+    assert packet["facts"]["metrics.scout_visits"] is None
+
+
 async def test_structured_review_uses_only_bounded_packet_and_deduplicates_calls(run):
     captured = []
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from .actions import Invest
 from .system2 import DEFAULT_PLAN, Plan
 
-POLICY_VERSION = "terran-bio-v2"
+POLICY_VERSION = "terran-squads-v3"
 OPENINGS = ("balanced", "pressure", "macro")
 MIN_TRIALS = 3
 

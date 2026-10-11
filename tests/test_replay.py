@@ -29,3 +29,18 @@ def test_export_publishes_small_index_and_complete_data(tmp_path):
     assert index == {"map": "Test", "duration": 10, "frames": 2, "plans": 0, "decisions": 1}
     assert json.loads((tmp_path / "viewer/data.json").read_text()) == data
     assert not list((tmp_path / "viewer").glob("*.tmp"))
+
+
+def test_replay_preserves_squad_ownership_orders_and_scouting(tmp_path):
+    rows = [
+        {"kind": "squad", "t": 2, "role": "harass"},
+        {"kind": "squad_roster", "t": 1, "role": "harass", "tags": ["99"]},
+        {"kind": "squad_order", "t": 3, "role": "harass", "mode": "kite"},
+        {"kind": "scout_visit", "t": 4},
+    ]
+    (tmp_path / "trace.jsonl").write_text("\n".join(json.dumps(row) for row in rows))
+    result = annotations(tmp_path)
+    assert result["squads"] == [rows[0]]
+    assert result["squadRosters"] == [rows[1]]
+    assert result["squadOrders"] == [rows[2]]
+    assert result["scouting"] == [rows[3]]

@@ -13,7 +13,14 @@ from .state import Snapshot
 INSTRUCTIONS = """\
 You are the strategic commander (System 2) of a Terran StarCraft II bot.
 A fast System 1 model makes tactical calls every ~2 game seconds within your plan;
-deterministic code handles SCVs, supply depots, unit production, and micro.
+deterministic code handles SCVs, supply depots, unit production, and unit orders.
+Independent Jev squad brains steer ongoing reconnaissance, harassment, and the main
+army concurrently. Scouts record recent enemy positions, economy, tech and movement.
+Movement toward our bases is evidence of direction, not proof of enemy intent;
+unseen or stale enemy contacts do not establish that the opposing army is weak.
+Harassment uses surplus infantry while the economy grows; local danger and base
+defense override squad choices. Read intelligence and recent squad decisions when
+planning pressure and a final attack. Add-ons/Stim remain required for bio tech.
 
 Units available: Marine, Marauder. Investments available: expand, barracks, refinery,
 techlab, reactor, engbay, stim, weapons1.

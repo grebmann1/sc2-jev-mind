@@ -10,19 +10,24 @@ import asyncio
 import logging
 from collections.abc import Callable
 from copy import deepcopy
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Any
 
 from .actions import (
+    Focus,
     Invest,
+    Role,
     Stance,
     baseline_investment,
+    baseline_squad_mode,
     legal_investments,
+    legal_squad_modes,
     legal_stances,
     safety_override,
 )
 from .config import Config
 from .memory import Episode, MemoryStore, jev_summary
+from .squads import SquadDecision, SquadObservation, SquadReflex
 from .state import Snapshot
 from .system1 import Decision, Reflex
 from .system2 import DEFAULT_PLAN, Plan, Reasoner
@@ -44,6 +49,7 @@ class Mind:
         episode: Episode | None = None,
         initial_plan: Plan | None = None,
         experience: dict[str, Any] | None = None,
+        squad_reflexes: dict[Role, SquadReflex] | None = None,
     ) -> None:
         self.cfg = cfg
         self.reflex = reflex
@@ -70,6 +76,11 @@ class Mind:
         self._s2_at = -1e9
         self._wake_s2: str | None = "game start"
         self._closed = False
+        self.squad_reflexes = squad_reflexes or {}
+        self._squad_tasks: dict[Role, tuple[asyncio.Task, float, tuple]] = {}
+        self._squad_choices: dict[Role, tuple[SquadDecision, float, tuple]] = {}
+        self._squad_at: dict[Role, float] = {}
+        self.squad_recent: list[dict] = []
 
     def tick(self, snap: Snapshot) -> tuple[Invest, Stance]:
         if self._closed:
@@ -115,6 +126,97 @@ class Mind:
 
         return self.invest, safety_override(snap, self.stance)
 
+    def tick_squads(self, observations: list[SquadObservation]) -> dict[Role, SquadDecision]:
+        """Independent bounded background requests; no model await in the game loop."""
+        if self._closed:
+            raise RuntimeError("Mind is closed")
+        active = {o.role: o for o in observations if o.tags}
+        for role, (task, requested_at, identity) in list(self._squad_tasks.items()):
+            o = active.get(role)
+            if not task.done():
+                if o is None or o.identity != identity:
+                    task.cancel()
+                continue
+            del self._squad_tasks[role]
+            try:
+                answer = task.result()
+                if not isinstance(answer, SquadDecision):
+                    raise ValueError("Squad brain did not return a typed decision")
+                answer.__post_init__()
+            except asyncio.CancelledError:
+                continue
+            except Exception as error:
+                if self.episode:
+                    self.episode.errors["system1_squads"] += 1
+                self.trace(
+                    "squad_error",
+                    {
+                        "t": requested_at if o is None else o.time_s,
+                        "role": role.value,
+                        "error": type(error).__name__,
+                    },
+                )
+                continue
+            if (
+                o is None
+                or o.identity != identity
+                or o.time_s - requested_at > self.cfg.squad_max_age_s
+            ):
+                self.trace("squad_discarded", {"role": role.value, "requested_t": requested_at})
+                continue
+            if (
+                answer.confidence >= self.cfg.s1_min_confidence
+                and answer.mode in legal_squad_modes(o)
+                and answer.focus in (Focus.ANY, *o.targets)
+            ):
+                self._squad_choices[role] = answer, requested_at, identity
+            applied = self._squad_choice(o)
+            event = {
+                "t": o.time_s,
+                "requested_t": requested_at,
+                "age_s": o.time_s - requested_at,
+                "role": role.value,
+                "tags": [str(tag) for tag in o.tags],
+                "goal": o.goal,
+                **asdict(answer),
+                "applied": [applied.mode.value, applied.focus.value],
+            }
+            self.trace("squad", event)
+            self.squad_recent = (self.squad_recent + [event])[-12:]
+        result = {}
+        for role, o in active.items():
+            result[role] = self._squad_choice(o)
+            if (
+                role in self.squad_reflexes
+                and role not in self._squad_tasks
+                and o.time_s - self._squad_at.get(role, -1e9) >= self.cfg.squad_interval_s
+            ):
+                self._squad_at[role] = o.time_s
+                task = asyncio.create_task(self._call_squad(role, deepcopy(o)))
+                self._squad_tasks[role] = task, o.time_s, o.identity
+        for role in self._squad_choices.keys() - active.keys():
+            del self._squad_choices[role]
+        return result
+
+    def _squad_choice(self, o: SquadObservation) -> SquadDecision:
+        saved = self._squad_choices.get(o.role)
+        if saved:
+            answer, requested_at, identity = saved
+            if (
+                o.identity == identity
+                and o.time_s - requested_at <= self.cfg.squad_max_age_s
+                and answer.mode in legal_squad_modes(o)
+                and answer.focus in (Focus.ANY, *o.targets)
+            ):
+                return answer
+        return SquadDecision(baseline_squad_mode(o), 1, Focus.ANY)
+
+    async def _call_squad(self, role: Role, o: SquadObservation) -> SquadDecision:
+        async with asyncio.timeout(self.cfg.s1_timeout_s):
+            return await self.squad_reflexes[role].decide(
+                replace(o, experience=jev_summary(self.experience))
+            )
+
     def invest_done(self) -> None:
         if self.episode and self.invest is not Invest.NONE:
             self.episode.investments[self.invest.value] += 1
@@ -140,7 +242,11 @@ class Mind:
                         "memory_error", {"operation": "retrieve", "type": type(error).__name__}
                     )
             self.experience = experience
-            context = {**experience, "opening_plan": self.opening_plan}
+            context = {
+                **experience,
+                "opening_plan": self.opening_plan,
+                "recent_squad_decisions": deepcopy(self.squad_recent),
+            }
             if self.episode:
                 context["current_match"] = {
                     "metrics": self.episode.metrics(),
@@ -248,16 +354,20 @@ class Mind:
         if self._closed:
             return
         self._closed = True
-        tasks = [t for t in (self._s1, self._s2) if t is not None and not t.done()]
+        all_tasks = [self._s1, self._s2, *(row[0] for row in self._squad_tasks.values())]
+        tasks = [t for t in all_tasks if t is not None and not t.done()]
         for task in tasks:
             if not task.done():
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        for task in (self._s1, self._s2):
+        for task in all_tasks:
             if task is not None and task.done() and not task.cancelled():
                 task.exception()  # Consume failures even if no final tick collected them.
         self._s1 = self._s2 = None
-        for model in (self.reflex, self.reasoner):
+        self._squad_tasks.clear()
+        self._squad_choices.clear()
+        models = {id(m): m for m in (self.reflex, self.reasoner, *self.squad_reflexes.values())}
+        for model in models.values():
             close = getattr(model, "close", None)
             if close is not None:
                 try:

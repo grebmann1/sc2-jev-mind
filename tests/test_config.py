@@ -28,3 +28,11 @@ def test_environment_overrides(monkeypatch):
     monkeypatch.setenv("OPENAI_MODEL", "example-model")
     cfg = Config.from_env(offline=True)
     assert (cfg.offline, cfg.s1_timeout_s, cfg.openai_model) == (True, 1.5, "example-model")
+
+
+def test_multi_squad_environment_is_strict(monkeypatch):
+    monkeypatch.setenv("SC2MIND_MULTI_SQUAD", "false")
+    assert not Config.from_env().multi_squad
+    monkeypatch.setenv("SC2MIND_MULTI_SQUAD", "invalid")
+    with pytest.raises(ValueError):
+        Config.from_env()

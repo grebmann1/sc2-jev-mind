@@ -9,6 +9,13 @@ def _f(name: str, default: float) -> float:
     return float(os.environ.get(name, default))
 
 
+def _bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name, str(default)).lower()
+    if value not in {"true", "false", "1", "0", "yes", "no"}:
+        raise ValueError(f"{name} must be true or false")
+    return value in {"true", "1", "yes"}
+
+
 @dataclass(frozen=True)
 class Config:
     jev_model: str = "jev-latest"
@@ -27,10 +34,15 @@ class Config:
     s2_timeout_s: float = 30.0
     s1_max_age_s: float = 8.0
     s2_max_age_s: float = 120.0
+    squad_interval_s: float = 3.0
+    squad_max_age_s: float = 6.0
+    multi_squad: bool = True
     offline: bool = False
 
     def __post_init__(self) -> None:
         for name in (
+            "squad_interval_s",
+            "squad_max_age_s",
             "s1_interval_s",
             "s2_interval_s",
             "s2_min_interval_s",
@@ -64,5 +76,8 @@ class Config:
             s2_timeout_s=_f("S2_TIMEOUT_S", cls.s2_timeout_s),
             s1_max_age_s=_f("S1_MAX_AGE_S", cls.s1_max_age_s),
             s2_max_age_s=_f("S2_MAX_AGE_S", cls.s2_max_age_s),
+            squad_interval_s=_f("SQUAD_INTERVAL_S", cls.squad_interval_s),
+            squad_max_age_s=_f("SQUAD_MAX_AGE_S", cls.squad_max_age_s),
+            multi_squad=_bool("SC2MIND_MULTI_SQUAD", cls.multi_squad),
             offline=offline,
         )

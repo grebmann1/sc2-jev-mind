@@ -211,6 +211,34 @@ def evidence_packet(run_dir: Path, record: dict | None, memory: MemoryStore | No
         }
         for key, value in providers[name].items():
             facts[f"providers.{name}.{key}"] = value
+    for role in ("main", "scout", "harass"):
+        answers = [r for r in rows if r.get("kind") == "squad" and r.get("role") == role]
+        if answers or any(
+            r.get("kind") in ("squad_error", "squad_discarded") and r.get("role") == role
+            for r in rows
+        ):
+            values = {
+                "collected_answers": len(answers),
+                "errors": sum(
+                    r.get("kind") == "squad_error" and r.get("role") == role for r in rows
+                ),
+                "stale_answers": sum(
+                    r.get("kind") == "squad_discarded" and r.get("role") == role for r in rows
+                ),
+            }
+            providers[f"squad_{role}"] = values
+            for key, value in values.items():
+                facts[f"providers.squad_{role}.{key}"] = value
+    if any(snap.get("intelligence") for snap in snapshots) or counts["squad_roster"]:
+        facts["scouting.visits"] = counts["scout_visit"]
+        facts["execution.squad_losses"] = dict(
+            Counter(r.get("role") for r in rows if r.get("kind") == "squad_loss")
+        )
+        facts["scouting.latest_intelligence"] = snapshots[-1].get("intelligence", {})
+        warnings[0] = (
+            "Assigned-squad losses and observed intelligence are recorded. Damage, path "
+            "reachability, idle production and complete bot-visibility history remain unmeasured."
+        )
     for key, signal in patterns["signals"].items():
         facts[f"signals.{key}"] = signal
     investments = Counter(row.get("invest") for row in rows if row.get("kind") == "investment")
