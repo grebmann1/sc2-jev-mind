@@ -58,6 +58,9 @@ class Episode:
         self.errors: Counter = Counter()
         self.scout_visits: int | None = None
         self.squad_losses: Counter = Counter()
+        self.economy_modes: Counter = Counter()
+        self.worker_commands: Counter = Counter()
+        self.economy_observation: dict | None = None
         self.observations = 0
         self.peak_workers = self.peak_army_supply = self.peak_bases = 0
         self.supply_blocked_s = self.under_threat_s = 0.0
@@ -121,6 +124,7 @@ class Episode:
                     "stim": snap.stim,
                     "weapons1": snap.weapons1,
                     "intelligence": json.loads(json.dumps(snap.intelligence)),
+                    "economy": json.loads(json.dumps(self.economy_observation)),
                 }
             )
             self.timeline = self.timeline[-200:]
@@ -138,6 +142,9 @@ class Episode:
             "observations": self.observations,
             "scout_visits": self.scout_visits,
             "squad_losses": dict(self.squad_losses),
+            "economy_modes": dict(self.economy_modes),
+            "worker_commands": dict(self.worker_commands),
+            "economy_observation": self.economy_observation,
             "observed_mineral_bank_s": round(self.mineral_bank_s, 1),
             "peak_minerals": self.peak_minerals,
             "peak_gas": self.peak_gas,

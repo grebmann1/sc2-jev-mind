@@ -29,6 +29,10 @@ describe('recorded squad playback', () => {
       squadOrders: [{ t: 2, role: 'harass', tags: ['1','2'], mode: 'kite', focus: 'workers', goal: '<img src=x onerror=alert(1)>' }] });
     expect(document.getElementById('squadRows')?.textContent).toContain('harass · 2 units · kite');
     expect(document.querySelector('img')).toBeNull();
+    call({ economyOrders: [{ t: 2, workers: 24, mode: 'gas', repairing: 1, evacuating: 2, priority: 'expand' }] });
+    expect((document.getElementById('squadCard') as HTMLElement).hidden).toBe(false);
+    expect(document.getElementById('squadRows')?.textContent).toContain('Base & workers · 24 SCVs · gas');
+    expect(document.querySelector('#squadRows span:last-child')?.getAttribute('title')).toContain('1 repairing · 2 evacuating');
     call({});
     expect((document.getElementById('squadCard') as HTMLElement).hidden).toBe(true);
   });

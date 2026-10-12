@@ -20,12 +20,15 @@ from .actions import (
     Stance,
     baseline_investment,
     baseline_squad_mode,
+    legal_economy_priorities,
     legal_investments,
     legal_squad_modes,
     legal_stances,
+    legal_worker_modes,
     safety_override,
 )
 from .config import Config
+from .economy import EconomyDecision, EconomyObservation, EconomyReflex, baseline_economy
 from .memory import Episode, MemoryStore, jev_summary
 from .squads import SquadDecision, SquadObservation, SquadReflex
 from .state import Snapshot
@@ -50,6 +53,7 @@ class Mind:
         initial_plan: Plan | None = None,
         experience: dict[str, Any] | None = None,
         squad_reflexes: dict[Role, SquadReflex] | None = None,
+        economy_reflex: EconomyReflex | None = None,
     ) -> None:
         self.cfg = cfg
         self.reflex = reflex
@@ -81,6 +85,107 @@ class Mind:
         self._squad_choices: dict[Role, tuple[SquadDecision, float, tuple]] = {}
         self._squad_at: dict[Role, float] = {}
         self.squad_recent: list[dict] = []
+        self.economy_reflex = economy_reflex
+        self._economy_task: asyncio.Task | None = None
+        self._economy_at = -1e9
+        self._economy_identity: tuple = ()
+        self._economy_choice: tuple[EconomyDecision, float, tuple] | None = None
+        self.economy_recent: list[dict] = []
+        self.economy_state: dict[str, Any] = {}
+
+    def tick_economy(self, o: EconomyObservation) -> EconomyDecision:
+        """Schedule the independent worker brain; never wait for its response."""
+        if self._closed:
+            raise RuntimeError("Mind is closed")
+        task = self._economy_task
+        self.economy_state = {
+            "t": o.snap.time_s,
+            "bases": [asdict(b) for b in o.bases],
+            "gas_sites": [asdict(g) for g in o.gas_sites],
+            "damaged_structures": len(o.damaged_structures),
+            "protected_workers": o.protected_workers,
+            "idle_workers": o.idle_workers,
+        }
+        if self.episode:
+            self.episode.economy_observation = deepcopy(self.economy_state)
+        if task is not None:
+            if not task.done():
+                if o.identity != self._economy_identity:
+                    task.cancel()
+            else:
+                self._economy_task = None
+                try:
+                    answer = task.result()
+                    if not isinstance(answer, EconomyDecision):
+                        raise ValueError("Worker brain did not return a typed decision")
+                    answer.__post_init__()
+                    if (
+                        o.identity != self._economy_identity
+                        or o.snap.time_s - self._economy_at > self.cfg.economy_max_age_s
+                    ):
+                        self.trace(
+                            "economy_discarded",
+                            {
+                                "t": o.snap.time_s,
+                                "requested_t": self._economy_at,
+                                "reason": "assignment_changed"
+                                if o.identity != self._economy_identity
+                                else "too_old",
+                            },
+                        )
+                    else:
+                        if answer.confidence >= self.cfg.s1_min_confidence and self._economy_legal(
+                            o, answer
+                        ):
+                            self._economy_choice = answer, self._economy_at, o.identity
+                        applied = self._choose_economy(o)
+                        event = {
+                            "t": o.snap.time_s,
+                            "requested_t": self._economy_at,
+                            "age_s": o.snap.time_s - self._economy_at,
+                            **asdict(answer),
+                            "applied": [applied.mode.value, applied.priority.value],
+                        }
+                        self.trace("economy", event)
+                        self.economy_recent = (self.economy_recent + [event])[-8:]
+                except asyncio.CancelledError:
+                    pass
+                except Exception as error:
+                    if self.episode:
+                        self.episode.errors["system1_economy"] += 1
+                    self.trace("economy_error", {"t": o.snap.time_s, "error": type(error).__name__})
+        choice = self._choose_economy(o)
+        if (
+            self.economy_reflex is not None
+            and o.bases
+            and self._economy_task is None
+            and o.snap.time_s - self._economy_at >= self.cfg.economy_interval_s
+        ):
+            self._economy_at, self._economy_identity = o.snap.time_s, o.identity
+            self._economy_task = asyncio.create_task(self._call_economy(deepcopy(o)))
+        return choice
+
+    @staticmethod
+    def _economy_legal(o: EconomyObservation, d: EconomyDecision) -> bool:
+        return d.mode in legal_worker_modes(o) and d.priority in legal_economy_priorities(o)
+
+    def _choose_economy(self, o: EconomyObservation) -> EconomyDecision:
+        saved = self._economy_choice
+        if saved:
+            answer, requested_at, identity = saved
+            if (
+                o.identity == identity
+                and o.snap.time_s - requested_at <= self.cfg.economy_max_age_s
+                and self._economy_legal(o, answer)
+            ):
+                return answer
+        return baseline_economy(o)
+
+    async def _call_economy(self, o: EconomyObservation) -> EconomyDecision:
+        async with asyncio.timeout(self.cfg.s1_timeout_s):
+            return await self.economy_reflex.decide(
+                replace(o, experience=jev_summary(self.experience))
+            )
 
     def tick(self, snap: Snapshot) -> tuple[Invest, Stance]:
         if self._closed:
@@ -228,10 +333,12 @@ class Mind:
                 replace(o, experience=jev_summary(self.experience))
             )
 
-    def invest_done(self) -> None:
-        if self.episode and self.invest is not Invest.NONE:
-            self.episode.investments[self.invest.value] += 1
-        self.invest = Invest.NONE
+    def invest_done(self, investment: Invest | None = None) -> None:
+        done = self.invest if investment is None else investment
+        if self.episode and done is not Invest.NONE:
+            self.episode.investments[done.value] += 1
+        if done is self.invest:
+            self.invest = Invest.NONE
 
     async def _call_s1(self, snap: Snapshot, plan: Plan) -> Decision:
         async with asyncio.timeout(self.cfg.s1_timeout_s):
@@ -257,6 +364,8 @@ class Mind:
                 **experience,
                 "opening_plan": self.opening_plan,
                 "recent_squad_decisions": deepcopy(self.squad_recent),
+                "recent_economy_decisions": deepcopy(self.economy_recent),
+                "economy_observation": deepcopy(self.economy_state),
             }
             if self.episode:
                 context["current_match"] = {
@@ -365,7 +474,12 @@ class Mind:
         if self._closed:
             return
         self._closed = True
-        all_tasks = [self._s1, self._s2, *(row[0] for row in self._squad_tasks.values())]
+        all_tasks = [
+            self._s1,
+            self._s2,
+            self._economy_task,
+            *(row[0] for row in self._squad_tasks.values()),
+        ]
         tasks = [t for t in all_tasks if t is not None and not t.done()]
         for task in tasks:
             if not task.done():
@@ -375,9 +489,20 @@ class Mind:
             if task is not None and task.done() and not task.cancelled():
                 task.exception()  # Consume failures even if no final tick collected them.
         self._s1 = self._s2 = None
+        self._economy_task = None
+        self._economy_choice = None
         self._squad_tasks.clear()
         self._squad_choices.clear()
-        models = {id(m): m for m in (self.reflex, self.reasoner, *self.squad_reflexes.values())}
+        models = {
+            id(m): m
+            for m in (
+                self.reflex,
+                self.reasoner,
+                self.economy_reflex,
+                *self.squad_reflexes.values(),
+            )
+            if m is not None
+        }
         for model in models.values():
             close = getattr(model, "close", None)
             if close is not None:

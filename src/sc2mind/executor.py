@@ -42,6 +42,7 @@ class Executor:
         self._searched: set[Point2] = set()
         self._addon_rax: int | None = None
         self.reserved_workers: set[int] = set()
+        self.economy_workers: set[int] = set()
         self.scan_target: Point2 | None = None
         self.scan_reserve = False
         self._last_scan = -1e9
@@ -73,6 +74,7 @@ class Executor:
         available = self.bot.workers.filter(
             lambda w: (
                 w.tag not in self.reserved_workers
+                and w.tag not in self.economy_workers
                 and w.tag not in self.bot.unit_tags_received_action
                 and (w.is_idle or w.is_gathering)
             )

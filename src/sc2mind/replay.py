@@ -36,6 +36,9 @@ def annotations(directory: Path) -> dict:
         "scouting": [r for r in trace if r.get("kind") == "scout_visit"],
         "squadOrders": [r for r in trace if r.get("kind") == "squad_order"],
         "squadRosters": [r for r in trace if r.get("kind") == "squad_roster"],
+        "economyDecisions": [r for r in trace if r.get("kind") == "economy"],
+        "economyOrders": [r for r in trace if r.get("kind") == "economy_order"],
+        "workerOrders": [r for r in trace if r.get("kind") == "worker_order"],
     }
 
 
@@ -57,6 +60,9 @@ def write_export(output: Path, data: dict) -> None:
             "scouting",
             "squadOrders",
             "squadRosters",
+            "economyDecisions",
+            "economyOrders",
+            "workerOrders",
         )
     }
     metadata.update(

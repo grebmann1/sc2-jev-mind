@@ -3,12 +3,13 @@ from __future__ import annotations
 from sc2.bot_ai import BotAI
 from sc2.data import Result
 
-from .actions import Invest
+from .actions import Invest, economy_investment
 from .executor import Executor
 from .mind import Mind
 from .squad_executor import SquadExecutor
 from .state import EnemyMemory, snapshot_from_bot
 from .trace import JsonlTrace
+from .workers import WorkerManager
 
 
 class DualMindBot(BotAI):
@@ -22,6 +23,7 @@ class DualMindBot(BotAI):
     async def on_start(self) -> None:
         self.executor = Executor(self)
         self.squad_executor = SquadExecutor(self, self.executor, self.memory, self.tracer)
+        self.worker_manager = WorkerManager(self, self.executor, self.tracer)
         self.tracer("start", {"map": self.game_info.map_name, "enemy_race": self.enemy_race.name})
 
     async def on_step(self, iteration: int) -> None:
@@ -31,7 +33,15 @@ class DualMindBot(BotAI):
         if self.mind.cfg.multi_squad:
             self.squad_executor.assign(snap)
         # Keep the active worker scout out of mining redistribution and builder selection.
-        if iteration % 20 == 0:
+        if self.mind.cfg.economy_brain:
+            economy = self.mind.tick_economy(self.worker_manager.observation(snap, self.mind.plan))
+            invest = economy_investment(invest, economy.priority)
+            work = self.worker_manager.step(economy, invest)
+            if self.mind.episode:
+                self.mind.episode.worker_commands.update(work["issued"])
+                if work["logged"]:
+                    self.mind.episode.economy_modes[economy.mode.value] += 1
+        elif iteration % 20 == 0:
             workers = self.workers
             try:
                 self.workers = workers.filter(lambda w: w.tag not in self.executor.reserved_workers)
@@ -44,7 +54,7 @@ class DualMindBot(BotAI):
         pending = invest
         if invest is not Invest.NONE:
             if await self.executor.invest(invest, snap):
-                self.mind.invest_done()
+                self.mind.invest_done(invest)
                 pending = Invest.NONE
                 self.tracer("investment", {"t": self.time, "invest": invest.value})
             else:

@@ -23,6 +23,9 @@ def test_export_publishes_small_index_and_complete_data(tmp_path):
         "plans": [],
         "decisions": [{"t": 2}],
         "types": {},
+        "economyDecisions": [{"t": 2, "mode": "gas"}],
+        "economyOrders": [{"t": 3, "workers": 24}],
+        "workerOrders": [{"t": 4, "action": "gas"}],
     }
     write_export(tmp_path / "viewer", data)
     index = json.loads((tmp_path / "viewer/metadata.json").read_text())
@@ -37,6 +40,9 @@ def test_replay_preserves_squad_ownership_orders_and_scouting(tmp_path):
         {"kind": "squad_roster", "t": 1, "role": "harass", "tags": ["99"]},
         {"kind": "squad_order", "t": 3, "role": "harass", "mode": "kite"},
         {"kind": "scout_visit", "t": 4},
+        {"kind": "economy", "t": 5, "mode": "minerals"},
+        {"kind": "economy_order", "t": 6, "workers": 24},
+        {"kind": "worker_order", "t": 7, "action": "repair"},
     ]
     (tmp_path / "trace.jsonl").write_text("\n".join(json.dumps(row) for row in rows))
     result = annotations(tmp_path)
@@ -44,3 +50,6 @@ def test_replay_preserves_squad_ownership_orders_and_scouting(tmp_path):
     assert result["squadRosters"] == [rows[1]]
     assert result["squadOrders"] == [rows[2]]
     assert result["scouting"] == [rows[3]]
+    assert result["economyDecisions"] == [rows[4]]
+    assert result["economyOrders"] == [rows[5]]
+    assert result["workerOrders"] == [rows[6]]

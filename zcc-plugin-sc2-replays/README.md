@@ -48,7 +48,9 @@ Favorites, bookmarks, and notes live in the plugin's Zana-managed SQLite databas
 
 See [LIVE_TEST.md](LIVE_TEST.md) for live verification and [ROADMAP.md](ROADMAP.md) for the feature brainstorm.
 
-New squad-enabled recordings include a **Parallel squad control** card with each
+New squad-enabled recordings include a **Parallel control** card with each
 group's orders and deployment. Green map rings identify reconnaissance units; amber
 rings identify harassment units. Ownership follows the recorded roster, including
-recalls and unit losses. Older recordings keep their existing playback layout.
+recalls and unit losses. A **Base & workers** pill shows recorded SCV counts and
+economic priorities, with repair/evacuation counts in its tooltip. Older recordings
+keep their existing playback layout.

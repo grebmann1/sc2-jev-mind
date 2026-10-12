@@ -40,7 +40,7 @@ production. Respect implementation_capabilities: this bot does not swap attached
 add-ons. Proposed/applied choice differences do not measure add-on oscillations,
 plan churn, or production utilization. Use direct measures, or propose instrumentation.
 Game-time answer age is not wall-clock API latency. Missing/low-coverage data is unknown.
-Squad reassignment discards are expected safety checks, not provider latency failures.
+Squad/worker-brain reassignment discards are expected safety checks, not provider latency failures.
 Historical squad discards without a reason remain unclassified.
 Prefer general mechanisms (supply forecasting, spending, scouting, production,
 defense, plan stability, provider reliability) over map-, opponent-, or timestamp-specific
@@ -240,6 +240,26 @@ def evidence_packet(run_dir: Path, record: dict | None, memory: MemoryStore | No
             providers[f"squad_{role}"] = values
             for key, value in values.items():
                 facts[f"providers.squad_{role}.{key}"] = value
+    economy_answers = [r for r in rows if r.get("kind") == "economy"]
+    economy_discards = [r for r in rows if r.get("kind") == "economy_discarded"]
+    if economy_answers or counts["economy_order"] or counts["economy_error"]:
+        providers["economy"] = {
+            "collected_answers": len(economy_answers),
+            "errors": counts["economy_error"],
+            "stale_answers": sum(r.get("reason") == "too_old" for r in economy_discards),
+            "discarded_answers": len(economy_discards),
+            "assignment_discards": sum(
+                r.get("reason") == "assignment_changed" for r in economy_discards
+            ),
+        }
+        for key, value in providers["economy"].items():
+            facts[f"providers.economy.{key}"] = value
+        facts["execution.worker_orders"] = dict(
+            Counter(r.get("action") for r in rows if r.get("kind") == "worker_order")
+        )
+        orders = [r for r in rows if r.get("kind") == "economy_order"]
+        if orders:
+            facts["economy.latest_allocation"] = orders[-1]
     if any(snap.get("intelligence") for snap in snapshots) or counts["squad_roster"]:
         facts["scouting.visits"] = counts["scout_visit"]
         facts["execution.squad_losses"] = dict(
@@ -328,7 +348,7 @@ def evidence_packet(run_dir: Path, record: dict | None, memory: MemoryStore | No
         "implementation_capabilities": {
             "units": ["Marine", "Marauder"],
             "addons": "Constructs Tech Labs/Reactors on eligible bare Barracks; no lifting, swapping or conversion of attached add-ons.",
-            "execution": "SCVs/supply/infantry production and safety overrides run in code; models select legal investments, stance and plan goals. When enabled, independent Jev main/scout/harass clients choose bounded squad maneuvers and local focus classes with exclusive unit ownership.",
+            "execution": "SCVs/supply/infantry production and safety overrides run in code; models select legal investments, stance and plan goals. Independent Jev main/scout/harass clients choose bounded squad maneuvers and local focus classes. A separate worker client steers safe mineral/gas allocation, limited structure repair, worker evacuation and economic priorities through the shared investment path. Worker commands record issued intents, not completed repairs or damage prevented.",
             "answer_differences": "Proposed versus accepted choices can differ due to confidence, legality or retained decisions. Accepted stance is recorded before the per-frame defensive override.",
         },
         "warnings": warnings,

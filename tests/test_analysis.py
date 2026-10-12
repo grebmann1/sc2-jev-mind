@@ -171,6 +171,19 @@ def test_historical_trace_does_not_invent_zero_scouting_metrics(run):
     assert packet["facts"]["metrics.scout_visits"] is None
 
 
+def test_economy_review_records_orders_and_identifies_its_provider(run):
+    trace = JsonlTrace(run / "trace.jsonl")
+    trace("economy_order", {"t": 20, "mode": "gas", "workers": 24, "bases": []})
+    trace("worker_order", {"t": 21, "action": "gas", "worker": "1", "target": "20"})
+    trace("economy_error", {"t": 22, "error": "TimeoutError"})
+    trace.close()
+    packet = evidence_packet(run, None, None)
+    assert packet["facts"]["execution.worker_orders"] == {"gas": 1}
+    assert packet["facts"]["economy.latest_allocation"]["workers"] == 24
+    finding = next(f for f in measured_review(packet).findings if f.category == "reliability")
+    assert finding.evidence_ids == ["providers.economy.errors"]
+
+
 async def test_structured_review_uses_only_bounded_packet_and_deduplicates_calls(run):
     captured = []
 

@@ -37,10 +37,15 @@ class Config:
     squad_interval_s: float = 3.0
     squad_max_age_s: float = 6.0
     multi_squad: bool = True
+    economy_brain: bool = True
+    economy_interval_s: float = 4.0
+    economy_max_age_s: float = 8.0
     offline: bool = False
 
     def __post_init__(self) -> None:
         for name in (
+            "economy_interval_s",
+            "economy_max_age_s",
             "squad_interval_s",
             "squad_max_age_s",
             "s1_interval_s",
@@ -79,5 +84,8 @@ class Config:
             squad_interval_s=_f("SQUAD_INTERVAL_S", cls.squad_interval_s),
             squad_max_age_s=_f("SQUAD_MAX_AGE_S", cls.squad_max_age_s),
             multi_squad=_bool("SC2MIND_MULTI_SQUAD", cls.multi_squad),
+            economy_brain=_bool("SC2MIND_ECONOMY_BRAIN", cls.economy_brain),
+            economy_interval_s=_f("ECONOMY_INTERVAL_S", cls.economy_interval_s),
+            economy_max_age_s=_f("ECONOMY_MAX_AGE_S", cls.economy_max_age_s),
             offline=offline,
         )

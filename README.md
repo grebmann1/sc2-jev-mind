@@ -52,8 +52,9 @@ worker lines while the main army pushes or defends. Depots lower for our army an
 
 ## Parallel squad control
 
-The default controller has a macro Jev client plus three independent squad clients:
-main army, reconnaissance, and harassment. They share observed intelligence and the
+The default controller has a macro Jev client, three independent combat squad clients
+(main army, reconnaissance, harassment), and a dedicated base/worker Jev client.
+They share observed intelligence and the
 OpenAI strategy but own disjoint unit tags. Each active squad has at most one model
 request in flight; inactive groups make no calls. Decisions are refreshed every
 three game seconds, expire after six, and are discarded when membership or mission
@@ -72,7 +73,7 @@ is away; other energy supports MULEs. Worker production grows with base capacity
 `SQUAD_INTERVAL_S`, `SQUAD_MAX_AGE_S`, and `SC2MIND_MULTI_SQUAD` configure this mode.
 Use `--single-army` (also supported by the benchmark) to disable squad control for an
 ablation. This is not an exact reproduction of the earlier controller; compare the
-prior commit in a separate checkout for that. Controller/policy version 3 keeps its
+prior commit in a separate checkout for that. Controller/policy version 4 keeps its
 learning cohort separate from older games without deleting their memory.
 
 Squad decisions, ownership, orders, scout visits, and assigned-unit losses are
@@ -80,6 +81,23 @@ recorded. Episode memory includes scouting history and squad losses. The Zana re
 viewer shows each group's recorded mode and unit ownership; reading a replay makes
 no model calls. Combat outcomes, path reachability and actual damage still require
 further instrumentation for causal analysis.
+
+The base/worker brain refreshes every four game seconds and expires after eight.
+It sees each ready base/refinery's assigned and ideal harvesters, idle workers,
+damaged structures, resources, threats and the shared plan/experience. It chooses
+balanced, mineral, gas or repair priorities; nearby danger forces evacuation.
+Code assigns currently eligible SCVs to safe mining sites, moves surplus workers
+to new bases, bounds repairs to a few workers, and returns released workers to
+mining. Scouts, builders and workers already commanded are protected. Economic
+growth proposals use the existing single investment path, preserving committed
+production/tech investments; essential SCV and supply production remains automatic.
+Observed saturation, worker orders and economy decisions are included in memory,
+OpenAI context, post-game reports and replay playback. Issued repair/mining orders
+do not prove completed repairs or resource yield.
+
+`SC2MIND_ECONOMY_BRAIN`, `ECONOMY_INTERVAL_S` and `ECONOMY_MAX_AGE_S` configure this
+brain. `--no-economy-brain` restores the previous worker distributor and is supported
+by the benchmark for ablations. Older saved experience is preserved.
 
 ## Headless Linux engine through Docker
 
@@ -288,6 +306,7 @@ shares experience between matches. Use the same context settings when comparing 
 | `mind.py` | Non-blocking scheduling, validation, timeouts, freshness, confidence, and shutdown |
 | `squads.py` / `squad_executor.py` | Independent Jev squad clients, exclusive unit ownership, scouting, harassment and micro |
 | `intelligence.py` | Bounded observed contacts, sighting age, army movement and scouting visits |
+| `economy.py` / `workers.py` | Independent Jev economy brain, saturation allocation, repairs, worker evacuation and shared economic priorities |
 | `memory.py` | Persistent SQLite episodes, observed lessons, comparable retrieval, bounded match timeline |
 | `learning.py` | Validated opening catalog and evidence-based exploration/selection |
 | `executor.py` | Supply/workers before investment; reserved production; queued reactors; scouting/combat |

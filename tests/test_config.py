@@ -26,13 +26,19 @@ def test_rejects_invalid_configuration(field, value):
 def test_environment_overrides(monkeypatch):
     monkeypatch.setenv("S1_TIMEOUT_S", "1.5")
     monkeypatch.setenv("OPENAI_MODEL", "example-model")
+    monkeypatch.setenv("ECONOMY_INTERVAL_S", "5")
     cfg = Config.from_env(offline=True)
     assert (cfg.offline, cfg.s1_timeout_s, cfg.openai_model) == (True, 1.5, "example-model")
+    assert cfg.economy_interval_s == 5
 
 
-def test_multi_squad_environment_is_strict(monkeypatch):
-    monkeypatch.setenv("SC2MIND_MULTI_SQUAD", "false")
-    assert not Config.from_env().multi_squad
-    monkeypatch.setenv("SC2MIND_MULTI_SQUAD", "invalid")
+@pytest.mark.parametrize(
+    "env,field",
+    [("SC2MIND_MULTI_SQUAD", "multi_squad"), ("SC2MIND_ECONOMY_BRAIN", "economy_brain")],
+)
+def test_brain_environment_is_strict(monkeypatch, env, field):
+    monkeypatch.setenv(env, "false")
+    assert not getattr(Config.from_env(), field)
+    monkeypatch.setenv(env, "invalid")
     with pytest.raises(ValueError):
         Config.from_env()

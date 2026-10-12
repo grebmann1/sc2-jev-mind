@@ -150,6 +150,84 @@ class Focus(StrEnum):
     STRUCTURES = "structures"
 
 
+class WorkerMode(StrEnum):
+    BALANCE = "balance"
+    MINERALS = "minerals"
+    GAS = "gas"
+    REPAIR = "repair"
+    EVACUATE = "evacuate"
+
+
+WORKER_DESCRIPTIONS = {
+    WorkerMode.BALANCE: "Balance mineral saturation with two workers per available refinery",
+    WorkerMode.MINERALS: "Prioritize mineral saturation, keeping one worker per refinery",
+    WorkerMode.GAS: "Fill refineries to three workers while retaining mineral income",
+    WorkerMode.REPAIR: "Allocate a few SCVs to damaged structures and balance remaining miners",
+    WorkerMode.EVACUATE: "Withdraw endangered workers and keep safe bases mining",
+}
+WORKER_REBALANCE_S = 2.0
+WORKER_DANGER_RADIUS = 15.0
+REPAIR_HEALTH_FLOOR = 0.75
+REPAIR_MINERALS = 50
+MAX_REPAIR_WORKERS = 3
+
+
+def legal_worker_modes(o) -> list[WorkerMode]:
+    if o.snap.base_threatened:
+        return [WorkerMode.EVACUATE]
+    modes = [WorkerMode.BALANCE, WorkerMode.MINERALS]
+    if o.gas_sites:
+        modes.append(WorkerMode.GAS)
+    if o.damaged_structures and o.snap.minerals >= REPAIR_MINERALS:
+        modes.append(WorkerMode.REPAIR)
+    return modes
+
+
+def legal_economy_priorities(o) -> list[Invest]:
+    if o.snap.base_threatened:
+        return [Invest.NONE]
+    legal = legal_investments(o.snap)
+    priorities = [Invest.NONE]
+    capacity = sum(site.ideal for site in o.bases)
+    if (
+        Invest.EXPAND in legal
+        and o.snap.workers >= max(16, capacity)
+        and o.snap.barracks + o.snap.barracks_pending > 0
+    ):
+        priorities.append(Invest.EXPAND)
+    if Invest.REFINERY in legal and o.snap.barracks > 0 and o.snap.workers >= 14:
+        priorities.append(Invest.REFINERY)
+    return priorities
+
+
+def baseline_worker_mode(o) -> WorkerMode:
+    legal = legal_worker_modes(o)
+    if WorkerMode.EVACUATE in legal:
+        return WorkerMode.EVACUATE
+    if WorkerMode.REPAIR in legal:
+        return WorkerMode.REPAIR
+    if o.snap.gas > 450 and o.snap.minerals < 300:
+        return WorkerMode.MINERALS
+    if WorkerMode.GAS in legal and o.snap.gas < 150:
+        return WorkerMode.GAS
+    return WorkerMode.BALANCE
+
+
+def economy_investment(macro: Invest, economy: Invest) -> Invest:
+    # One investment path; do not starve a pending production/tech investment.
+    if macro in (Invest.NONE, Invest.EXPAND, Invest.REFINERY) and economy is not Invest.NONE:
+        return economy
+    return macro
+
+
+def gas_worker_quota(mode: WorkerMode) -> int:
+    return 1 if mode is WorkerMode.MINERALS else 3 if mode is WorkerMode.GAS else 2
+
+
+def mineral_worker_floor(mode: WorkerMode) -> int:
+    return 8 if mode is WorkerMode.GAS else 16 if mode is WorkerMode.MINERALS else 12
+
+
 SCOUT_REVISIT_S = 45.0
 INTEL_FRESH_S = 30.0
 MICRO_HEALTH_FLOOR = 0.35

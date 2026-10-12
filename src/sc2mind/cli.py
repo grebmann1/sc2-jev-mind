@@ -16,6 +16,7 @@ from pathlib import Path
 from .actions import Role
 from .config import Config
 from .doctor import preflight, report
+from .economy import JevEconomyReflex, OfflineEconomyReflex
 from .engine import engine_runner, resolve_engine_runner
 from .learning import OPENINGS, choose_opening, opening_plan
 from .memory import Episode, MatchContext, MemoryStore
@@ -73,7 +74,7 @@ def _controller_id(cfg: Config) -> str:
         settings.pop("jev_model")
         settings.pop("openai_model")
     return json.dumps(
-        {"implementation": "offline-v3" if cfg.offline else "jev-openai-v3", "settings": settings},
+        {"implementation": "offline-v4" if cfg.offline else "jev-openai-v4", "settings": settings},
         sort_keys=True,
     )
 
@@ -85,6 +86,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--difficulty", default="Medium", choices=DIFFICULTIES)
     p.add_argument("--offline", action="store_true", help="Rule-based stand-ins for both models")
     p.add_argument("--single-army", action="store_true", help="Disable independent squad brains")
+    p.add_argument(
+        "--no-economy-brain", action="store_true", help="Use the legacy worker distributor"
+    )
     modes = p.add_mutually_exclusive_group()
     modes.add_argument("--doctor", action="store_true", help="Check setup without launching SC2")
     modes.add_argument(
@@ -147,6 +151,8 @@ def main(argv: list[str] | None = None) -> int:
         cfg = Config.from_env(offline=args.offline or args.simulate)
         if args.single_army:
             cfg = replace(cfg, multi_squad=False)
+        if args.no_economy_brain:
+            cfg = replace(cfg, economy_brain=False)
     except ValueError as error:
         print(f"Invalid configuration: {error}", file=sys.stderr)
         return 2
@@ -199,7 +205,7 @@ def main(argv: list[str] | None = None) -> int:
 
     mind = None
     squad_reflexes = {}
-    reflex = reasoner = None
+    reflex = reasoner = economy_reflex = None
     try:
         context = MatchContext(
             args.map,
@@ -245,6 +251,12 @@ def main(argv: list[str] | None = None) -> int:
                     if cfg.offline
                     else JevSquadReflex(cfg.jev_model, timeout_s=cfg.s1_timeout_s)
                 )
+        if cfg.economy_brain:
+            economy_reflex = (
+                OfflineEconomyReflex()
+                if cfg.offline
+                else JevEconomyReflex(cfg.jev_model, timeout_s=cfg.s1_timeout_s)
+            )
         mind = Mind(
             cfg,
             reflex,
@@ -255,6 +267,7 @@ def main(argv: list[str] | None = None) -> int:
             initial_plan=opening_plan(opening),
             experience=experience,
             squad_reflexes=squad_reflexes,
+            economy_reflex=economy_reflex,
         )
         bot = DualMindBot(mind, trace)
         trace(
@@ -361,7 +374,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
 
             async def close_clients():
-                for client in (reflex, reasoner, *squad_reflexes.values()):
+                for client in (reflex, reasoner, economy_reflex, *squad_reflexes.values()):
                     close = getattr(client, "close", None)
                     if close:
                         try:

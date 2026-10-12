@@ -62,6 +62,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--opening", choices=["auto", *OPENINGS], default="auto")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--single-army", action="store_true")
+    parser.add_argument("--no-economy-brain", action="store_true")
     parser.add_argument("--no-analysis", action="store_true")
     parser.add_argument("--analysis-offline", action="store_true")
     parser.add_argument(
@@ -133,6 +134,8 @@ def main(argv: list[str] | None = None) -> int:
             command.append("--offline")
         if args.single_army:
             command.append("--single-army")
+        if args.no_economy_brain:
+            command.append("--no-economy-brain")
         if args.no_analysis:
             command.append("--no-analysis")
         if args.analysis_offline:
